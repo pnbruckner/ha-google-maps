@@ -1,0 +1,69 @@
+{
+    "config": {
+        "error": {
+            "invalid_cookies_file": "Invalid cookies file."
+        },
+        "step": {
+            "account_entity": {
+                "data": {
+                    "create_acct_entity": "Create entity for account"
+                },
+                "description": "Entities created for specified account will be missing some data.\n\nSee {doc} for more information.",
+                "title": "Account Entity"
+            },
+            "cookies": {
+                "data": {
+                    "use_existing_cookies": "Use existing cookies file"
+                },
+                "description": "Existing cookies file for {username} found:\n\n{cookies_file}",
+                "title": "Use Existing Cookies File"
+            },
+            "cookies_upload": {
+                "data": {
+                    "cookies": "Cookies file"
+                },
+                "description": "Upload cookies file for {username}.",
+                "title": "Upload Cookies File"
+            },
+            "max_gps_accuracy": {
+                "data": {
+                    "max_gps_accuracy": "Maximum GPS accuracy (meters)"
+                },
+                "description": "Location updates with accuracy above this limit will be ignored.",
+                "title": "GPS Accuracy Limit"
+            },
+            "update_period": {
+                "data": {
+                    "scan_interval": "Update period"
+                },
+                "title": "Update Period"
+            },
+            "user": {
+                "data": {
+                    "username": "Username"
+                },
+                "title": "Google Maps Account Username"
+            }
+        }
+    },
+    "entity": {
+        "device_tracker": {
+            "tracker": {
+                "state_attributes": {
+                    "address": {
+                        "name": "Address"
+                    },
+                    "battery_charging": {
+                        "name": "Battery charging"
+                    },
+                    "last_seen": {
+                        "name": "Last seen"
+                    },
+                    "nickname": {
+                        "name": "Nickname"
+                    }
+                }
+            }
+        }
+    }
+}
