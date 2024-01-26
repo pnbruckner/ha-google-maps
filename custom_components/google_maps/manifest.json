@@ -9,5 +9,5 @@
   "issue_tracker": "https://github.com/pnbruckner/ha-google-maps/issues",
   "loggers": ["locationsharinglib"],
   "requirements": ["locationsharinglib==5.0.1"],
-  "version": "1.0.0b0"
+  "version": "1.0.0b1"
 }
