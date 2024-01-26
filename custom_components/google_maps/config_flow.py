@@ -10,8 +10,13 @@ from locationsharinglib.locationsharinglibexceptions import InvalidCookies, Inva
 import voluptuous as vol
 
 from homeassistant.components.file_upload import process_uploaded_file
-from homeassistant.config_entries import ConfigFlow
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    OptionsFlowWithConfigEntry,
+)
 from homeassistant.const import CONF_SCAN_INTERVAL, CONF_USERNAME
+from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowHandler, FlowResult
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.selector import (
@@ -38,6 +43,7 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+_CONF_UPDATE_COOKIES = "update_cookies"
 _CONF_USE_EXISTING_COOKIES = "use_existing_cookies"
 
 
@@ -52,12 +58,12 @@ class GoogleMapsFlow(FlowHandler):
     def options(self) -> dict[str, Any]:
         """Return mutable copy of options."""
 
-    def _get_uploaded_cookies(self, uploaded_file_id: str) -> None:
+    def _get_uploaded_cookies(self, uploaded_file_id: str) -> str:
         """Validate and read cookies from uploaded cookies file."""
         with process_uploaded_file(self.hass, uploaded_file_id) as file_path:
             # Test cookies file.
             Service(file_path, self._username)
-            self._cookies = file_path.read_text()
+            return file_path.read_text()
 
     def _save_cookies(self, cookies_file: str) -> None:
         """Save cookies."""
@@ -101,7 +107,7 @@ class GoogleMapsFlow(FlowHandler):
 
         if user_input is not None:
             try:
-                await self.hass.async_add_executor_job(
+                self._cookies = await self.hass.async_add_executor_job(
                     self._get_uploaded_cookies, user_input[CONF_COOKIES_FILE]
                 )
             except (InvalidCookies, InvalidData) as exc:
@@ -207,6 +213,15 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
         """Initialize config flow."""
         self._options: dict[str, Any] = {}
 
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> GoogleMapsOptionsFlow:
+        """Get the options flow for this handler."""
+        return GoogleMapsOptionsFlow(config_entry)
+        # flow = GoogleMapsOptionsFlow(config_entry)
+        # flow.init_step = "cookies"
+        # return flow
+
     @property
     def options(self) -> dict[str, Any]:
         """Return mutable copy of options."""
@@ -241,3 +256,46 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
             data={CONF_COOKIES_FILE: cookies_file, CONF_USERNAME: self._username},
             options=self.options,
         )
+
+
+class GoogleMapsOptionsFlow(OptionsFlowWithConfigEntry, GoogleMapsFlow):
+    """Google Maps options flow."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Start options flow."""
+        if user_input is not None:
+            if user_input[_CONF_UPDATE_COOKIES]:
+                return await self.async_step_cookies()
+            return await self.async_step_account_entity()
+
+        self._username = self.config_entry.data[CONF_USERNAME]
+        data_schema = vol.Schema(
+            {vol.Required(_CONF_UPDATE_COOKIES): BooleanSelector()}
+        )
+        return self.async_show_form(
+            step_id="init",
+            data_schema=data_schema,
+            description_placeholders={"username": self._username},
+            last_step=False,
+        )
+
+    async def async_step_done(self, _: dict[str, Any] | None = None) -> FlowResult:
+        """Finish the flow."""
+        if hasattr(self, "_cookies"):
+            await self.hass.async_add_executor_job(
+                self._save_cookies, self.config_entry.data[CONF_COOKIES_FILE]
+            )
+            # Cookies file content has been updated, so config entry needs to be
+            # reloaded to use the new cookies. However, if none of the (other) options
+            # have actually changed, the entry update listeners won't be called, and the
+            # entry will therefore not get reloaded. If this is the case, initiate a
+            # reload from here. We don't have to worry about the flow being completely
+            # finished because neither the config data nor options are changing.
+            if self.options == self.config_entry.options:
+                self.hass.async_create_task(
+                    self.hass.config_entries.async_reload(self.config_entry.entry_id)
+                )
+
+        return self.async_create_entry(title="", data=self.options)

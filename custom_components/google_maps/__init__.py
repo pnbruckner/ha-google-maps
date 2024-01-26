@@ -227,6 +227,11 @@ class GMIntegData:
     coordinators: dict[ConfigID, GMDataUpdateCoordinator] = field(default_factory=dict)
 
 
+async def entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Handle config entry update."""
+    await hass.config_entries.async_reload(entry.entry_id)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up config entry."""
     if not (gmi_data := cast(GMIntegData | None, hass.data.get(DOMAIN))):
@@ -293,6 +298,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     gmi_data.coordinators[cid] = coordinator
 
+    entry.async_on_unload(entry.add_update_listener(entry_updated))
     await hass.config_entries.async_forward_entry_setups(entry, _PLATFORMS)
     return True
 
