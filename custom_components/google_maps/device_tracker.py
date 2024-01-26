@@ -103,7 +103,7 @@ class GoogleMapsScanner:
         credfile = str(old_cookies_file_path(hass, self.username))
         try:
             self.service = Service(credfile, self.username)
-            self._update_info()
+            self._update_info()  # type: ignore[no-untyped-call]
 
             track_time_interval(hass, self._update_info, self.scan_interval)
 
@@ -116,7 +116,7 @@ class GoogleMapsScanner:
             )
             self.success_init = False
 
-    def _update_info(self, now=None):
+    def _update_info(self, now=None):  # type: ignore[no-untyped-def]
         for person in self.service.get_all_people():
             try:
                 dev_id = f"google_maps_{slugify(person.id)}"
@@ -140,7 +140,7 @@ class GoogleMapsScanner:
                 continue
 
             last_seen = dt_util.as_utc(person.datetime)
-            if last_seen < self._prev_seen.get(dev_id, last_seen):
+            if last_seen < self._prev_seen.get(dev_id, last_seen):  # type: ignore[operator]
                 _LOGGER.debug(
                     "Ignoring %s update because timestamp is older than last timestamp",
                     person.nickname,
@@ -155,7 +155,7 @@ class GoogleMapsScanner:
                     last_seen,
                 )
                 continue
-            self._prev_seen[dev_id] = last_seen
+            self._prev_seen[dev_id] = last_seen  # type: ignore[assignment]
 
             attrs = {
                 ATTR_ADDRESS: person.address,
@@ -191,10 +191,9 @@ async def async_setup_entry(
     @callback
     def create_entities(reg_uids: frozenset[UniqueID] = frozenset()) -> None:
         """Create entities for newly seen people and optionally registered ones."""
-        taken_uids = unique_ids.not_owned(cid)
-        create_uids = (set(coordinator.data) - taken_uids | reg_uids) - created_uids
-        if create_uids:
-            unique_ids.take(cid, create_uids)
+        if create_uids := (
+            unique_ids.take(cid, set(coordinator.data) | reg_uids) - created_uids
+        ):
             async_add_entities(
                 [
                     GoogleMapsDeviceTracker(coordinator, uid, max_gps_accuracy)
@@ -227,7 +226,7 @@ class GoogleMapsDeviceTracker(
         super().__init__(coordinator)
         self._attr_unique_id = uid
         self._max_gps_accuracy = max_gps_accuracy
-        if data := coordinator.data.get(cast(UniqueID, self.unique_id)):
+        if data := coordinator.data.get(uid):
             self._full_name = data.misc.full_name
             self._attr_name = f"{NAME_PREFIX} {self._full_name}"
             self._misc = copy(data.misc)
@@ -239,9 +238,7 @@ class GoogleMapsDeviceTracker(
             self._attr_name = ent_reg.entities[
                 cast(
                     str,
-                    ent_reg.async_get_entity_id(
-                        DT_DOMAIN, DOMAIN, cast(str, self.unique_id)
-                    ),
+                    ent_reg.async_get_entity_id(DT_DOMAIN, DOMAIN, uid),
                 )
             ].original_name
             self._full_name = cast(str, self._attr_name).removeprefix(f"{NAME_PREFIX} ")
