@@ -85,10 +85,12 @@ class LocationData:
     @classmethod
     def from_attributes(cls, attrs: Mapping[str, Any]) -> Self:
         """Initialize location data from state attributes."""
+        if not (last_seen := dt_util.parse_datetime(attrs[ATTR_LAST_SEEN])):
+            raise ValueError
         return cls(
             attrs[ATTR_ADDRESS],
             attrs[ATTR_GPS_ACCURACY],
-            dt_util.parse_datetime(attrs[ATTR_LAST_SEEN], raise_on_error=True),
+            last_seen,
             attrs[ATTR_LATITUDE],
             attrs[ATTR_LONGITUDE],
         )
