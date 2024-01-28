@@ -15,7 +15,7 @@
                 "data": {
                     "use_existing_cookies": "Use existing cookies file"
                 },
-                "description": "Existing cookies file for {username} found:\n\n{cookies_file}",
+                "description": "Use existing cookies file for {username}?\n\nFound with expiraton of {expiration}:\n\n{cookies_file}",
                 "title": "Use Existing Cookies File"
             },
             "cookies_upload": {
@@ -38,10 +38,19 @@
                 },
                 "title": "Update Period"
             },
+            "uploaded_cookie_menu": {
+                "description": "Expiration: {expiration}.",
+                "menu_options": {
+                    "account_entity": "Continue with cookies",
+                    "cookies_upload": "Upload a different cookies file"
+                },
+                "title": "Uploaded Cookies"
+            },
             "user": {
                 "data": {
                     "username": "Username"
                 },
+                "description": "The email address for the Google account to be used for retrieving shared location.",
                 "title": "Google Maps Account Username"
             }
         }
@@ -82,7 +91,7 @@
                 "data": {
                     "use_existing_cookies": "Use existing cookies file"
                 },
-                "description": "Existing cookies file for {username} found:\n\n{cookies_file}",
+                "description": "Use existing cookies file for {username}?\n\nFound with expiraton of {expiration}:\n\n{cookies_file}",
                 "title": "Use Existing Cookies File"
             },
             "cookies_upload": {
@@ -96,7 +105,7 @@
                 "data": {
                     "update_cookies": "Update cookies"
                 },
-                "description": "Update cookies for {username}?",
+                "description": "Update cookies for {username}?\n\nExpiration: {expiration}",
                 "title": "Cookies File"
             },
             "max_gps_accuracy": {
@@ -111,6 +120,14 @@
                     "scan_interval": "Update period"
                 },
                 "title": "Update Period"
+            },
+            "uploaded_cookie_menu": {
+                "description": "Expiration: {expiration}.",
+                "menu_options": {
+                    "account_entity": "Continue with cookies",
+                    "cookies_upload": "Upload a different cookies file"
+                },
+                "title": "Uploaded Cookies"
             }
         }
     }

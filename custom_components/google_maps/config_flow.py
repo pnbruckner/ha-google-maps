@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from datetime import datetime
 import logging
 from typing import Any
 
@@ -71,20 +72,38 @@ class GoogleMapsFlow(FlowHandler):
         cf_path.parent.mkdir(exist_ok=True)
         cf_path.write_text(self._cookies)
 
+    def _get_expiration(self, cookies: str) -> str:
+        """Return expiration of cookies."""
+        return str(
+            min(
+                [
+                    datetime.fromtimestamp(int(cookie_data[4]))
+                    for cookie_data in [
+                        line.strip().split()
+                        for line in cookies.splitlines()
+                        if line.strip() and not line.strip().startswith("#")
+                    ]
+                    if cookie_data[5] in ("__Secure-1PSID", "__Secure-3PSID")
+                ],
+                default="unknown",
+            )
+        )
+
     async def async_step_cookies(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Get a cookies file."""
-        cf_path = old_cookies_file_path(self.hass, self._username)
-
         if user_input is not None:
             if not user_input[_CONF_USE_EXISTING_COOKIES]:
+                del self._cookies
                 return await self.async_step_cookies_upload()
-            self._cookies = await self.hass.async_add_executor_job(cf_path.read_text)
             return await self.async_step_account_entity()
 
+        cf_path = old_cookies_file_path(self.hass, self._username)
         if not cf_path.exists():
             return await self.async_step_cookies_upload()
+        self._cookies = await self.hass.async_add_executor_job(cf_path.read_text)
+        expiration = self._get_expiration(self._cookies)
 
         data_schema = vol.Schema(
             {vol.Required(_CONF_USE_EXISTING_COOKIES, default=True): BooleanSelector()}
@@ -95,6 +114,7 @@ class GoogleMapsFlow(FlowHandler):
             description_placeholders={
                 "username": self._username,
                 "cookies_file": str(cf_path.name),
+                "expiration": expiration,
             },
             last_step=False,
         )
@@ -114,7 +134,7 @@ class GoogleMapsFlow(FlowHandler):
                 _LOGGER.debug("Error while validating cookies file: %s", exc)
                 errors[CONF_COOKIES_FILE] = "invalid_cookies_file"
             else:
-                return await self.async_step_account_entity()
+                return await self.async_step_uploaded_cookie_menu()
 
         data_schema = vol.Schema(
             {
@@ -129,6 +149,20 @@ class GoogleMapsFlow(FlowHandler):
             errors=errors,
             description_placeholders={"username": self._username},
             last_step=False,
+        )
+
+    async def async_step_uploaded_cookie_menu(
+        self, _: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Use uploaded cookie file or try again."""
+        menu_options = ["account_entity", "cookies_upload"]
+        return self.async_show_menu(
+            step_id="uploaded_cookie_menu",
+            menu_options=menu_options,
+            description_placeholders={
+                "username": self._username,
+                "expiration": self._get_expiration(self._cookies),
+            },
         )
 
     async def async_step_account_entity(
@@ -271,13 +305,22 @@ class GoogleMapsOptionsFlow(OptionsFlowWithConfigEntry, GoogleMapsFlow):
             return await self.async_step_account_entity()
 
         self._username = self.config_entry.data[CONF_USERNAME]
+        cf_path = cookies_file_path(
+            self.hass, self.config_entry.data[CONF_COOKIES_FILE]
+        )
+        expiration = self._get_expiration(
+            await self.hass.async_add_executor_job(cf_path.read_text)
+        )
         data_schema = vol.Schema(
             {vol.Required(_CONF_UPDATE_COOKIES): BooleanSelector()}
         )
         return self.async_show_form(
             step_id="init",
             data_schema=data_schema,
-            description_placeholders={"username": self._username},
+            description_placeholders={
+                "username": self._username,
+                "expiration": expiration,
+            },
             last_step=False,
         )
 
