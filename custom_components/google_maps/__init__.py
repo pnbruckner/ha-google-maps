@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, NewType, Self, cast
 
 from locationsharinglib import Person, Service
+from locationsharinglib.locationsharinglib import VALID_COOKIE_NAMES
 from locationsharinglib.locationsharinglibexceptions import (
     InvalidCookieFile,
     InvalidCookies,
@@ -32,6 +33,11 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers.issue_registry import (
+    IssueSeverity,
+    async_create_issue,
+    async_delete_issue,
+)
 from homeassistant.helpers.storage import STORAGE_DIR
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util, slugify
@@ -59,6 +65,31 @@ def old_cookies_file_path(hass: HomeAssistant, username: str) -> Path:
 def cookies_file_path(hass: HomeAssistant, cookies_file: str) -> Path:
     """Return path to cookies file."""
     return Path(hass.config.path()) / STORAGE_DIR / DOMAIN / cookies_file
+
+
+def get_expiration(cookies: str) -> datetime | None:
+    """Return expiration of cookies."""
+    return min(
+        [
+            dt_util.as_local(dt_util.utc_from_timestamp(int(cookie_data[4])))
+            for cookie_data in [
+                line.strip().split()
+                for line in cookies.splitlines()
+                if line.strip() and not line.strip().startswith("#")
+            ]
+            if cookie_data[5] in VALID_COOKIE_NAMES
+        ],
+        default=None,
+    )
+
+def exp_2_str(expiration: datetime | None) -> str:
+    """Convert expiration to a string."""
+    return str(expiration) if expiration is not None else "unknown"
+
+
+def expiring_soon(expiration: datetime | None) -> bool:
+    """Return if cookies are expiring soon."""
+    return expiration is not None and expiration - dt_util.now() < timedelta(weeks=4)
 
 
 @dataclass(frozen=True)
@@ -241,7 +272,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unique_ids = gmi_data.unique_ids
 
     cid = ConfigID(entry.entry_id)
-    cookies_file = str(cookies_file_path(hass, entry.data[CONF_COOKIES_FILE]))
+    cf_path = cookies_file_path(hass, entry.data[CONF_COOKIES_FILE])
     username = entry.data[CONF_USERNAME]
     create_acct_entity = entry.options[CONF_CREATE_ACCT_ENTITY]
     scan_interval = entry.options[CONF_SCAN_INTERVAL]
@@ -276,7 +307,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if not service:
                 service = cast(
                     Service,
-                    await hass.async_add_executor_job(Service, cookies_file, username),
+                    await hass.async_add_executor_job(Service, cf_path, username),
                 )
                 if create_acct_entity:
                     get_people_func = service.get_all_people
@@ -297,8 +328,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         update_method=update_method,
     )
     await coordinator.async_config_entry_first_refresh()
-
     gmi_data.coordinators[cid] = coordinator
+
+    expiration = get_expiration(await hass.async_add_executor_job(cf_path.read_text))
+    if expiring_soon(expiration):
+        async_create_issue(
+            hass,
+            DOMAIN,
+            entry.entry_id,
+            is_fixable=False,
+            is_persistent=False,
+            severity=IssueSeverity.WARNING,
+            translation_key="expiring_soon",
+            translation_placeholders={
+                "entry_id": entry.entry_id,
+                "expiration": exp_2_str(expiration),
+                "username": username,
+            },
+        )
+    else:
+        async_delete_issue(hass, DOMAIN, entry.entry_id)
 
     entry.async_on_unload(entry.add_update_listener(entry_updated))
     await hass.config_entries.async_forward_entry_setups(entry, _PLATFORMS)

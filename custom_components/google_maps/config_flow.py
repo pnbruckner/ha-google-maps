@@ -3,14 +3,12 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Mapping
-from datetime import datetime
 import logging
 from os import PathLike
 from pathlib import Path
 from typing import Any
 
 from locationsharinglib import Service
-from locationsharinglib.locationsharinglib import VALID_COOKIE_NAMES
 from locationsharinglib.locationsharinglibexceptions import (
     InvalidCookieFile,
     InvalidCookies,
@@ -42,7 +40,13 @@ from homeassistant.helpers.selector import (
 )
 from homeassistant.util.uuid import random_uuid_hex
 
-from . import cookies_file_path, old_cookies_file_path
+from . import (
+    cookies_file_path,
+    exp_2_str,
+    expiring_soon,
+    get_expiration,
+    old_cookies_file_path,
+)
 from .const import (
     CONF_COOKIES_FILE,
     CONF_CREATE_ACCT_ENTITY,
@@ -103,23 +107,6 @@ class GoogleMapsFlow(FlowHandler):
         cf_path.parent.mkdir(exist_ok=True)
         cf_path.write_text(self._cookies)
 
-    def _get_expiration(self, cookies: str) -> str:
-        """Return expiration of cookies."""
-        return str(
-            min(
-                [
-                    datetime.fromtimestamp(int(cookie_data[4]))
-                    for cookie_data in [
-                        line.strip().split()
-                        for line in cookies.splitlines()
-                        if line.strip() and not line.strip().startswith("#")
-                    ]
-                    if cookie_data[5] in VALID_COOKIE_NAMES
-                ],
-                default="unknown",
-            )
-        )
-
     async def async_step_cookies(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -139,7 +126,6 @@ class GoogleMapsFlow(FlowHandler):
             return await self.async_step_old_cookies_invalid(cf_path=cf_path)
 
         self._cookies = await self.hass.async_add_executor_job(cf_path.read_text)
-        expiration = self._get_expiration(self._cookies)
 
         data_schema = vol.Schema(
             {vol.Required(_CONF_USE_EXISTING_COOKIES, default=True): BooleanSelector()}
@@ -150,7 +136,7 @@ class GoogleMapsFlow(FlowHandler):
             description_placeholders={
                 "username": self._username,
                 "cookies_file": str(cf_path.name),
-                "expiration": expiration,
+                "expiration": exp_2_str(get_expiration(self._cookies)),
             },
             last_step=False,
         )
@@ -215,7 +201,7 @@ class GoogleMapsFlow(FlowHandler):
             menu_options=menu_options,
             description_placeholders={
                 "username": self._username,
-                "expiration": self._get_expiration(self._cookies),
+                "expiration": exp_2_str(get_expiration(self._cookies)),
             },
         )
 
@@ -388,18 +374,20 @@ class GoogleMapsOptionsFlow(OptionsFlowWithConfigEntry, GoogleMapsFlow):
         cf_path = cookies_file_path(
             self.hass, self.config_entry.data[CONF_COOKIES_FILE]
         )
-        expiration = self._get_expiration(
-            await self.hass.async_add_executor_job(cf_path.read_text)
-        )
+        cookies = await self.hass.async_add_executor_job(cf_path.read_text)
+        expiration = get_expiration(cookies)
         data_schema = vol.Schema(
             {vol.Required(_CONF_UPDATE_COOKIES): BooleanSelector()}
+        )
+        data_schema = self.add_suggested_values_to_schema(
+            data_schema, {_CONF_UPDATE_COOKIES: expiring_soon(expiration)}
         )
         return self.async_show_form(
             step_id="init",
             data_schema=data_schema,
             description_placeholders={
                 "username": self._username,
-                "expiration": expiration,
+                "expiration": exp_2_str(expiration),
             },
             last_step=False,
         )

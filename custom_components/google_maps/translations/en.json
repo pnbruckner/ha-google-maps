@@ -83,6 +83,12 @@
             }
         }
     },
+    "issues": {
+        "expiring_soon": {
+            "description": "Cookies for {username} are expiring soon.\n\nTo fix, [click here](/config/integrations/integration/google_maps#config_entry={entry_id}) then click CONFIGURE and upload new cookies.",
+            "title": "Google Maps Cookies Expiring Soon"
+        }
+    },
     "options": {
         "error": {
             "invalid_cookies_file": "Invalid cookies file."
