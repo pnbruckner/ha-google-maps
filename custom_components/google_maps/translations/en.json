@@ -1,5 +1,8 @@
 {
     "config": {
+        "abort": {
+            "reauth_successful": "Re-authentication was successful"
+        },
         "error": {
             "invalid_cookies_file": "Invalid cookies file."
         },
@@ -32,6 +35,10 @@
                 "description": "Location updates with accuracy above this limit will be ignored.",
                 "title": "GPS Accuracy Limit"
             },
+            "old_cookies_invalid": {
+                "description": "Existing cookies file for {username} found but it is invalid:\n\n{cookies_file}",
+                "title": "Invalid Existing Cookies File"
+            },
             "update_period": {
                 "data": {
                     "scan_interval": "Update period"
@@ -42,7 +49,8 @@
                 "description": "Expiration: {expiration}.",
                 "menu_options": {
                     "account_entity": "Continue with cookies",
-                    "cookies_upload": "Upload a different cookies file"
+                    "cookies_upload": "Upload a different cookies file",
+                    "reauth_done": "Use cookies"
                 },
                 "title": "Uploaded Cookies"
             },
@@ -114,6 +122,10 @@
                 },
                 "description": "Location updates with accuracy above this limit will be ignored.",
                 "title": "GPS Accuracy Limit"
+            },
+            "old_cookies_invalid": {
+                "description": "Existing cookies file for {username} found but it is invalid:\n\n{cookies_file}",
+                "title": "Invalid Existing Cookies File"
             },
             "update_period": {
                 "data": {

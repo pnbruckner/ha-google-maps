@@ -2,12 +2,20 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from collections.abc import Mapping
 from datetime import datetime
 import logging
+from os import PathLike
+from pathlib import Path
 from typing import Any
 
 from locationsharinglib import Service
-from locationsharinglib.locationsharinglibexceptions import InvalidCookies, InvalidData
+from locationsharinglib.locationsharinglib import VALID_COOKIE_NAMES
+from locationsharinglib.locationsharinglibexceptions import (
+    InvalidCookieFile,
+    InvalidCookies,
+    InvalidData,
+)
 import voluptuous as vol
 
 from homeassistant.components.file_upload import process_uploaded_file
@@ -53,21 +61,44 @@ class GoogleMapsFlow(FlowHandler):
 
     _username: str
     _cookies: str
+    # The following are only used in the reauth flow.
+    _reauth_entry: ConfigEntry | None = None
+    _cookies_file: str
 
     @property
     @abstractmethod
     def options(self) -> dict[str, Any]:
         """Return mutable copy of options."""
 
-    def _get_uploaded_cookies(self, uploaded_file_id: str) -> str:
-        """Validate and read cookies from uploaded cookies file."""
-        with process_uploaded_file(self.hass, uploaded_file_id) as file_path:
-            # Test cookies file.
-            Service(file_path, self._username)
-            return file_path.read_text()
+    def _cookies_file_ok(self, cookies_file: str | PathLike) -> bool:
+        """Determine if cookies in file are ok.
+
+        Must be called in an executor.
+        """
+        try:
+            Service(cookies_file, self._username)
+        except (InvalidCookieFile, InvalidCookies, InvalidData) as exc:
+            _LOGGER.debug(
+                "Error while validating cookies file %s: %r", cookies_file, exc
+            )
+            return False
+        return True
+
+    def _get_uploaded_cookies(self, uploaded_file_id: str) -> str | None:
+        """Validate and read cookies from uploaded cookies file.
+
+        Must be called in an executor.
+        """
+        with process_uploaded_file(self.hass, uploaded_file_id) as cf_path:
+            if self._cookies_file_ok(cf_path):
+                return cf_path.read_text()
+            return None
 
     def _save_cookies(self, cookies_file: str) -> None:
-        """Save cookies."""
+        """Save cookies.
+
+        Must be called in an executor.
+        """
         cf_path = cookies_file_path(self.hass, cookies_file)
         cf_path.parent.mkdir(exist_ok=True)
         cf_path.write_text(self._cookies)
@@ -83,7 +114,7 @@ class GoogleMapsFlow(FlowHandler):
                         for line in cookies.splitlines()
                         if line.strip() and not line.strip().startswith("#")
                     ]
-                    if cookie_data[5] in ("__Secure-1PSID", "__Secure-3PSID")
+                    if cookie_data[5] in VALID_COOKIE_NAMES
                 ],
                 default="unknown",
             )
@@ -97,11 +128,16 @@ class GoogleMapsFlow(FlowHandler):
             if not user_input[_CONF_USE_EXISTING_COOKIES]:
                 del self._cookies
                 return await self.async_step_cookies_upload()
+            if self._reauth_entry:
+                return await self.async_step_reauth_done()
             return await self.async_step_account_entity()
 
         cf_path = old_cookies_file_path(self.hass, self._username)
-        if not cf_path.exists():
+        if not cf_path.is_file():
             return await self.async_step_cookies_upload()
+        if not await self.hass.async_add_executor_job(self._cookies_file_ok, cf_path):
+            return await self.async_step_old_cookies_invalid(cf_path=cf_path)
+
         self._cookies = await self.hass.async_add_executor_job(cf_path.read_text)
         expiration = self._get_expiration(self._cookies)
 
@@ -119,6 +155,23 @@ class GoogleMapsFlow(FlowHandler):
             last_step=False,
         )
 
+    async def async_step_old_cookies_invalid(
+        self, user_input: dict[str, Any] | None = None, *, cf_path: Path | None = None
+    ) -> FlowResult:
+        """Upload a cookies file."""
+        if user_input is not None:
+            return await self.async_step_cookies_upload()
+
+        assert cf_path
+        return self.async_show_form(
+            step_id="old_cookies_invalid",
+            description_placeholders={
+                "username": self._username,
+                "cookies_file": str(cf_path.name),
+            },
+            last_step=False,
+        )
+
     async def async_step_cookies_upload(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -126,15 +179,13 @@ class GoogleMapsFlow(FlowHandler):
         errors = {}
 
         if user_input is not None:
-            try:
-                self._cookies = await self.hass.async_add_executor_job(
-                    self._get_uploaded_cookies, user_input[CONF_COOKIES_FILE]
-                )
-            except (InvalidCookies, InvalidData) as exc:
-                _LOGGER.debug("Error while validating cookies file: %s", exc)
-                errors[CONF_COOKIES_FILE] = "invalid_cookies_file"
-            else:
+            cookies = await self.hass.async_add_executor_job(
+                self._get_uploaded_cookies, user_input[CONF_COOKIES_FILE]
+            )
+            if cookies:
+                self._cookies = cookies
                 return await self.async_step_uploaded_cookie_menu()
+            errors[CONF_COOKIES_FILE] = "invalid_cookies_file"
 
         data_schema = vol.Schema(
             {
@@ -155,7 +206,10 @@ class GoogleMapsFlow(FlowHandler):
         self, _: dict[str, Any] | None = None
     ) -> FlowResult:
         """Use uploaded cookie file or try again."""
-        menu_options = ["account_entity", "cookies_upload"]
+        menu_options = [
+            "reauth_done" if self._reauth_entry else "account_entity",
+            "cookies_upload",
+        ]
         return self.async_show_menu(
             step_id="uploaded_cookie_menu",
             menu_options=menu_options,
@@ -235,7 +289,13 @@ class GoogleMapsFlow(FlowHandler):
 
     @abstractmethod
     async def async_step_done(self, _: dict[str, Any] | None = None) -> FlowResult:
-        """Finish the flow."""
+        """Finish the user config or options flow."""
+
+    async def async_step_reauth_done(
+        self, _: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Finish the reauthorization flow."""
+        raise NotImplementedError
 
 
 class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
@@ -252,9 +312,6 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
     def async_get_options_flow(config_entry: ConfigEntry) -> GoogleMapsOptionsFlow:
         """Get the options flow for this handler."""
         return GoogleMapsOptionsFlow(config_entry)
-        # flow = GoogleMapsOptionsFlow(config_entry)
-        # flow.init_step = "cookies"
-        # return flow
 
     @property
     def options(self) -> dict[str, Any]:
@@ -280,8 +337,18 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
             step_id="user", data_schema=data_schema, last_step=False
         )
 
+    async def async_step_reauth(self, data: Mapping[str, Any]) -> FlowResult:
+        """Start reauthorization flow."""
+        _LOGGER.debug("async_step_reauth: %s", data)
+        self._cookies_file = data[CONF_COOKIES_FILE]
+        self._username = data[CONF_USERNAME]
+        self._reauth_entry = self.hass.config_entries.async_get_entry(
+            self.context["entry_id"]
+        )
+        return await self.async_step_cookies()
+
     async def async_step_done(self, _: dict[str, Any] | None = None) -> FlowResult:
-        """Finish the flow."""
+        """Finish the user config flow."""
         # Save cookies.
         cookies_file = random_uuid_hex()
         await self.hass.async_add_executor_job(self._save_cookies, cookies_file)
@@ -290,6 +357,19 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
             data={CONF_COOKIES_FILE: cookies_file, CONF_USERNAME: self._username},
             options=self.options,
         )
+
+    async def async_step_reauth_done(
+        self, _: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Finish the reauthorization flow."""
+        # Save cookies.
+        assert self._reauth_entry
+        await self.hass.async_add_executor_job(self._save_cookies, self._cookies_file)
+        _LOGGER.debug("Reauthorization successful")
+        self.hass.async_create_task(
+            self.hass.config_entries.async_reload(self._reauth_entry.entry_id)
+        )
+        return self.async_abort(reason="reauth_successful")
 
 
 class GoogleMapsOptionsFlow(OptionsFlowWithConfigEntry, GoogleMapsFlow):
