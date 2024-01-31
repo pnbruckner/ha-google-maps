@@ -9,10 +9,10 @@
         "step": {
             "account_entity": {
                 "data": {
-                    "create_acct_entity": "Create entity for account"
+                    "create_acct_entity": "Create tracker entity for account holder"
                 },
-                "description": "Entities created for specified account will be missing some data.\n\nSee {doc} for more information.",
-                "title": "Account Entity"
+                "description": "Unlike trackers created for accounts that share their location with {username}, the tracker created for the {username} account holder will be missing some data.\n\nSee {doc} for more information.\n\nShould a tracker be created for the {username} account holder?",
+                "title": "Account Tracker Entity"
             },
             "cookies": {
                 "data": {
@@ -96,10 +96,10 @@
         "step": {
             "account_entity": {
                 "data": {
-                    "create_acct_entity": "Create entity for account"
+                    "create_acct_entity": "Create tracker entity for account holder"
                 },
-                "description": "Entities created for specified account will be missing some data.\n\nSee {doc} for more information.",
-                "title": "Account Entity"
+                "description": "Unlike trackers created for accounts that share their location with {username}, the tracker created for the {username} account holder will be missing some data.\n\nSee {doc} for more information.\n\nShould a tracker be created for the {username} account holder?",
+                "title": "Account Tracker Entity"
             },
             "cookies": {
                 "data": {

@@ -38,10 +38,12 @@ from homeassistant.util import dt as dt_util, slugify
 
 from . import (
     ConfigID,
+    FromAttributesError,
     GMDataUpdateCoordinator,
     GMIntegData,
     LocationData,
     MiscData,
+    PersonData,
     UniqueID,
     old_cookies_file_path,
 )
@@ -226,14 +228,17 @@ class GoogleMapsDeviceTracker(
         super().__init__(coordinator)
         self._attr_unique_id = uid
         self._max_gps_accuracy = max_gps_accuracy
+
+        # Use misc data now if available. Loc data will be handled in
+        # async_added_to_hass.
         if data := coordinator.data.get(uid):
+            assert data.misc
             self._full_name = data.misc.full_name
             self._attr_name = f"{NAME_PREFIX} {self._full_name}"
             self._misc = copy(data.misc)
-            self._update_loc(copy(data.loc))
         else:
             # Created from Entity Registry. Get name from there.
-            # The rest is restored in async_added_to_hass.
+            # The rest is restored in async_added_to_hass if possible..
             ent_reg = er.async_get(coordinator.hass)
             self._attr_name = ent_reg.entities[
                 cast(
@@ -315,34 +320,57 @@ class GoogleMapsDeviceTracker(
             return None
         return self._loc.longitude
 
+    @property
+    def extra_restore_state_data(self) -> PersonData:
+        """Return Google Maps specific state data to be restored."""
+        return PersonData(self._loc, self._misc)
+
     async def async_added_to_hass(self) -> None:
         """Run when entity about to be added to hass."""
         await super().async_added_to_hass()
 
-        # Restore state if necessary.
-        if self._misc is not None and self._loc is not None:
-            return
+        # Restore state if possible.
         if not (last_state := await self.async_get_last_state()):
             return
 
+        # extra_restore_state_data was not implemented in 1.0.0b2 or earlier, so if it's
+        # not available, try restoring from saved attributes like what was done then.
+        last_extra_data = None
+        if restored_last_extra_data := await self.async_get_last_extra_data():
+            last_extra_data = PersonData.from_dict(restored_last_extra_data.as_dict())
         attrs = last_state.attributes
 
-        msgs = []
+        # Always restore loc data as "previous location" first, then overwrite with new
+        # location below if available and "better."
+        if last_extra_data:
+            self._loc = last_extra_data.loc
+        else:
+            with suppress(FromAttributesError):
+                self._loc = LocationData.from_attributes(attrs)
+        # Only restore misc data if we didn't get any when initialized.
         if self._misc is None:
-            with suppress(KeyError):
-                self._misc = MiscData.from_attributes(attrs, self._full_name)
-            msgs.append(f"misc {'success' if self._misc else 'failed'}")
-        if self._loc is None:
-            with suppress(KeyError, ValueError):
-                self._update_loc(LocationData.from_attributes(attrs))
-            msgs.append(f"loc {'success' if self._loc else 'failed'}")
-        _LOGGER.debug("Restored state for %s: %s", self.name, ", ".join(msgs))
+            if last_extra_data:
+                self._misc = last_extra_data.misc
+            else:
+                with suppress(FromAttributesError):
+                    self._misc = MiscData.from_attributes(attrs, self._full_name)
+
+        # Now that previous state has been restored, update with new data if possible.
+        if not (data := self.coordinator.data.get(cast(UniqueID, self.unique_id))):
+            return
+        assert data.loc
+        self._update_loc(copy(data.loc))
 
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         if not (data := self.coordinator.data.get(cast(UniqueID, self.unique_id))):
+            # TODO: Should we do anything special if data is not available, at least
+            # after first update, e.g., become unavailable, unknown or retored???
+            # And, if restored, do that by deleting ourselves???
             return
+        assert data.misc
+        assert data.loc
         self._misc = copy(data.misc)
         self._update_loc(copy(data.loc))
         super()._handle_coordinator_update()
@@ -351,6 +379,7 @@ class GoogleMapsDeviceTracker(
         """Update location data if possible."""
         prev_seen = self._loc and self._loc.last_seen
         last_seen = loc.last_seen
+        # Don't use "new" loc data if it really isn't new.
         if prev_seen and last_seen < prev_seen:
             self._log_ignore_reason(
                 f"timestamp went backwards: {last_seen} < {prev_seen}"
@@ -359,13 +388,28 @@ class GoogleMapsDeviceTracker(
         if prev_seen and last_seen == prev_seen:
             return
 
-        gps_accuracy = loc.gps_accuracy
-        if gps_accuracy > self._max_gps_accuracy:
-            self._log_ignore_reason(
-                f"expected GPS accuracy ({self._max_gps_accuracy}) is not met: "
-                f"{gps_accuracy}"
-            )
-            return
+        prev_gps_accuracy = self._loc and self._loc.gps_accuracy
+        last_gps_accuracy = loc.gps_accuracy
+        if prev_gps_accuracy:
+            # We have previous loc data.
+            if prev_gps_accuracy <= self._max_gps_accuracy:
+                # Previous loc data is "accurate."
+                # Don't use new loc data if it is inaccurate.
+                if last_gps_accuracy > self._max_gps_accuracy:
+                    self._log_ignore_reason(
+                        f"GPS accuracy ({last_gps_accuracy}) is greater than limit "
+                        f"({self._max_gps_accuracy})"
+                    )
+                    return
+            # Previous loc data is inaccurate.
+            # Don't use new data if it is less accurate.
+            elif last_gps_accuracy > prev_gps_accuracy:
+                self._log_ignore_reason(
+                    f"GPS accuracy ({last_gps_accuracy}) is greater than limit "
+                    f"({self._max_gps_accuracy}) and worse than previous "
+                    f"({prev_gps_accuracy})"
+                )
+                return
 
         self._loc = loc
 

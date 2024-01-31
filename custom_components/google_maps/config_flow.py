@@ -8,12 +8,12 @@ from os import PathLike
 from pathlib import Path
 from typing import Any
 
-from locationsharinglib import Service
 from locationsharinglib.locationsharinglibexceptions import (
     InvalidCookieFile,
     InvalidCookies,
     InvalidData,
 )
+from requests import RequestException
 import voluptuous as vol
 
 from homeassistant.components.file_upload import process_uploaded_file
@@ -38,9 +38,11 @@ from homeassistant.helpers.selector import (
     TextSelectorConfig,
     TextSelectorType,
 )
+from homeassistant.loader import async_get_integration
 from homeassistant.util.uuid import random_uuid_hex
 
 from . import (
+    GMService,
     cookies_file_path,
     exp_2_str,
     expiring_soon,
@@ -58,6 +60,7 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 _CONF_UPDATE_COOKIES = "update_cookies"
 _CONF_USE_EXISTING_COOKIES = "use_existing_cookies"
+_GMSERVICE_ERRORS = (InvalidCookieFile, InvalidCookies, InvalidData, RequestException)
 
 
 class GoogleMapsFlow(FlowHandler):
@@ -80,10 +83,10 @@ class GoogleMapsFlow(FlowHandler):
         Must be called in an executor.
         """
         try:
-            Service(cookies_file, self._username)
-        except (InvalidCookieFile, InvalidCookies, InvalidData) as exc:
+            GMService(cookies_file, self._username)
+        except _GMSERVICE_ERRORS as err:
             _LOGGER.debug(
-                "Error while validating cookies file %s: %r", cookies_file, exc
+                "Error while validating cookies file %s: %r", cookies_file, err
             )
             return False
         return True
@@ -128,7 +131,10 @@ class GoogleMapsFlow(FlowHandler):
         self._cookies = await self.hass.async_add_executor_job(cf_path.read_text)
 
         data_schema = vol.Schema(
-            {vol.Required(_CONF_USE_EXISTING_COOKIES, default=True): BooleanSelector()}
+            {vol.Required(_CONF_USE_EXISTING_COOKIES): BooleanSelector()}
+        )
+        data_schema = self.add_suggested_values_to_schema(
+            data_schema, {_CONF_USE_EXISTING_COOKIES: True}
         )
         return self.async_show_form(
             step_id="cookies",
@@ -220,12 +226,11 @@ class GoogleMapsFlow(FlowHandler):
             data_schema,
             {CONF_CREATE_ACCT_ENTITY: self.options.get(CONF_CREATE_ACCT_ENTITY, True)},
         )
+        doc = (await async_get_integration(self.hass, DOMAIN)).documentation
         return self.async_show_form(
             step_id="account_entity",
             data_schema=data_schema,
-            description_placeholders={
-                "doc": "https://www.home-assistant.io/integrations/google_maps/"
-            },
+            description_placeholders={"doc": doc, "username": self._username},
             last_step=False,
         )
 
@@ -257,7 +262,6 @@ class GoogleMapsFlow(FlowHandler):
     ) -> FlowResult:
         """Get update period."""
         if user_input is not None:
-            _LOGGER.debug("async_step_update_period: %s", user_input)
             self.options[CONF_SCAN_INTERVAL] = int(
                 cv.time_period_dict(user_input[CONF_SCAN_INTERVAL]).total_seconds()
             )
@@ -325,7 +329,6 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
 
     async def async_step_reauth(self, data: Mapping[str, Any]) -> FlowResult:
         """Start reauthorization flow."""
-        _LOGGER.debug("async_step_reauth: %s", data)
         self._cookies_file = data[CONF_COOKIES_FILE]
         self._username = data[CONF_USERNAME]
         self._reauth_entry = self.hass.config_entries.async_get_entry(

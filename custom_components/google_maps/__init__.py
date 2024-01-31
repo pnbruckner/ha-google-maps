@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import asdict as dc_asdict, dataclass, field
 from datetime import datetime, timedelta
 from functools import partial
 import logging
+from os import PathLike
 from pathlib import Path
 from typing import Any, NewType, Self, cast
 
@@ -16,6 +17,7 @@ from locationsharinglib.locationsharinglibexceptions import (
     InvalidCookies,
     InvalidData,
 )
+from requests import RequestException, Response, Session
 
 from homeassistant.components.device_tracker import DOMAIN as DT_DOMAIN
 from homeassistant.config_entries import ConfigEntry
@@ -38,6 +40,7 @@ from homeassistant.helpers.issue_registry import (
     async_create_issue,
     async_delete_issue,
 )
+from homeassistant.helpers.restore_state import ExtraStoredData
 from homeassistant.helpers.storage import STORAGE_DIR
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util, slugify
@@ -55,6 +58,11 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 _PLATFORMS = [Platform.DEVICE_TRACKER]
+
+_UNAUTHORIZED = 401
+_FORBIDDEN = 403
+_TOO_MANY_REQUESTS = 429
+_AUTH_ERRORS = (_UNAUTHORIZED, _FORBIDDEN)
 
 
 def old_cookies_file_path(hass: HomeAssistant, username: str) -> Path:
@@ -82,6 +90,7 @@ def get_expiration(cookies: str) -> datetime | None:
         default=None,
     )
 
+
 def exp_2_str(expiration: datetime | None) -> str:
     """Convert expiration to a string."""
     return str(expiration) if expiration is not None else "unknown"
@@ -90,6 +99,10 @@ def exp_2_str(expiration: datetime | None) -> str:
 def expiring_soon(expiration: datetime | None) -> bool:
     """Return if cookies are expiring soon."""
     return expiration is not None and expiration - dt_util.now() < timedelta(weeks=4)
+
+
+class FromAttributesError(Exception):
+    """Cannot create object from state attributes."""
 
 
 @dataclass(frozen=True)
@@ -102,29 +115,68 @@ class LocationData:
     latitude: float
     longitude: float
 
+    def as_dict(self) -> dict[str, Any]:
+        """Return a dict representation of the data."""
+        return dc_asdict(self)
+
+    @staticmethod
+    def _last_seen(data: Mapping[str, Any], key: str) -> datetime:
+        """Get last_seen from mapping, converting to datetime if necessary."""
+        last_seen: datetime | str | None
+        try:
+            last_seen = cast(datetime | str, data[key])
+            if isinstance(last_seen, datetime):
+                return last_seen
+            last_seen = dt_util.parse_datetime(last_seen)
+        except (KeyError, TypeError):
+            raise FromAttributesError
+        if last_seen is None:
+            raise FromAttributesError
+        return last_seen
+
+    @classmethod
+    def from_dict(cls, restored: dict[str, Any]) -> Self | None:
+        """Initialize location data from a dict."""
+        try:
+            last_seen = cls._last_seen(restored, "last_seen")
+        except FromAttributesError:
+            return None
+        try:
+            return cls(
+                restored["address"],
+                restored["gps_accuracy"],
+                last_seen,
+                restored["latitude"],
+                restored["longitude"],
+            )
+        except KeyError:
+            return None
+
     @classmethod
     def from_person(cls, person: Person) -> Self:
         """Initialize location data from Person object."""
         return cls(
-            person.address,
-            person.accuracy,
+            cast(str, person.address),
+            cast(int, person.accuracy),
             person.datetime,
-            person.latitude,
-            person.longitude,
+            cast(float, person.latitude),
+            cast(float, person.longitude),
         )
 
     @classmethod
     def from_attributes(cls, attrs: Mapping[str, Any]) -> Self:
         """Initialize location data from state attributes."""
-        if not (last_seen := dt_util.parse_datetime(attrs[ATTR_LAST_SEEN])):
-            raise ValueError
-        return cls(
-            attrs[ATTR_ADDRESS],
-            attrs[ATTR_GPS_ACCURACY],
-            last_seen,
-            attrs[ATTR_LATITUDE],
-            attrs[ATTR_LONGITUDE],
-        )
+        last_seen = cls._last_seen(attrs, ATTR_LAST_SEEN)
+        try:
+            return cls(
+                attrs[ATTR_ADDRESS],
+                attrs[ATTR_GPS_ACCURACY],
+                last_seen,
+                attrs[ATTR_LATITUDE],
+                attrs[ATTR_LONGITUDE],
+            )
+        except KeyError:
+            raise FromAttributesError
 
 
 @dataclass(frozen=True)
@@ -137,35 +189,69 @@ class MiscData:
     full_name: str
     nickname: str
 
+    def as_dict(self) -> dict[str, Any]:
+        """Return a dict representation of the data."""
+        return dc_asdict(self)
+
+    @classmethod
+    def from_dict(cls, restored: dict[str, Any]) -> Self | None:
+        """Initialize miscellaneous data from a dict."""
+        try:
+            return cls(
+                restored["battery_charging"],
+                restored["battery_level"],
+                restored["entity_picture"],
+                restored["full_name"],
+                restored["nickname"],
+            )
+        except KeyError:
+            return None
+
     @classmethod
     def from_person(cls, person: Person) -> Self:
         """Initialize miscellaneous data from Person object."""
         return cls(
             person.charging,
-            person.battery_level,
-            person.picture_url,
-            person.full_name,
-            person.nickname,
+            cast(int | None, person.battery_level),
+            cast(str, person.picture_url),
+            cast(str, person.full_name),
+            cast(str, person.nickname),
         )
 
     @classmethod
     def from_attributes(cls, attrs: Mapping[str, Any], full_name: str) -> Self:
         """Initialize miscellaneous data from state attributes."""
-        return cls(
-            attrs[ATTR_BATTERY_CHARGING],
-            attrs.get(ATTR_BATTERY_LEVEL),
-            attrs[ATTR_ENTITY_PICTURE],
-            full_name,
-            attrs[ATTR_NICKNAME],
-        )
+        try:
+            return cls(
+                attrs[ATTR_BATTERY_CHARGING],
+                attrs.get(ATTR_BATTERY_LEVEL),
+                attrs[ATTR_ENTITY_PICTURE],
+                full_name,
+                attrs[ATTR_NICKNAME],
+            )
+        except KeyError:
+            raise FromAttributesError
 
 
 @dataclass(frozen=True)
-class PersonData:
+class PersonData(ExtraStoredData):
     """Shared person data."""
 
-    loc: LocationData
-    misc: MiscData
+    loc: LocationData | None
+    misc: MiscData | None
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a dict representation of the data."""
+        return dc_asdict(self)
+
+    @classmethod
+    def from_dict(cls, restored: dict[str, Any]) -> Self | None:
+        """Return PersonData created from a dict."""
+        if (loc := restored.get("loc")) is not None:
+            loc = LocationData.from_dict(loc)
+        if (misc := restored.get("misc")) is not None:
+            misc = MiscData.from_dict(misc)
+        return cls(loc, misc)
 
     @classmethod
     def from_person(cls, person: Person) -> Self:
@@ -260,6 +346,61 @@ class GMIntegData:
     coordinators: dict[ConfigID, GMDataUpdateCoordinator] = field(default_factory=dict)
 
 
+class GMService(Service):  # type: ignore[misc]
+    """Service class with better error detection, handling & reporting."""
+
+    def __init__(
+        self, cookies_file: str | PathLike, authenticating_account: str
+    ) -> None:
+        """Initialize service."""
+        super().__init__(cookies_file, authenticating_account)
+
+    @staticmethod
+    def _get_server_response(session: Session) -> Response:
+        """Get response from server using session and check for unauthorized error."""
+        resp = None
+        try:
+            resp = cast(Response, Service._get_server_response(session))
+            resp.raise_for_status()
+        except RequestException as err:
+            if resp and resp.status_code in _AUTH_ERRORS:
+                _LOGGER.debug(
+                    "Error: %s: %i %s; reauthorize",
+                    err.__class__.__name__,
+                    resp.status_code,
+                    resp.reason,
+                )
+                raise InvalidCookies(f"{err.__class__.__name__}: {err}") from err
+            raise
+        return resp
+
+    def _get_data(self) -> list[str]:
+        """Get data, parse and check for invalid session."""
+        data = cast(
+            list[str],
+            self._parse_location_data(self._get_server_response(self._session).text),
+        )
+        try:
+            if data[6] == "GgA=":
+                raise InvalidCookies("Invalid session indicated")
+        except IndexError:
+            raise InvalidData(f"Unexpected data: {data}") from None
+        return data
+
+    # def substitute_cookies(self, cookies_file_contents: str) -> None:
+    #     """Create new session with different cookies that are NOT validated."""
+    #     cookie_entries = [line.strip() for line in cookies_file_contents.splitlines()
+    #                         if not line.strip().startswith('#') and line]
+    #     cookies = []
+    #     for entry in cookie_entries:
+    #         domain, flag, path, secure, expiry, name, value, *rest = entry.split()
+    #         cookies.append(Cookie(domain, flag, path, secure, expiry, name, value, rest)) # type: ignore
+    #     session = Session()
+    #     for cookie in cookies:
+    #         session.cookies.set(**cookie.to_dict())
+    #     self._session = session
+
+
 async def entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle config entry update."""
     await hass.config_entries.async_reload(entry.entry_id)
@@ -296,7 +437,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             dev_reg.async_remove_device(device.id)
         unique_ids.release(cid, username)
 
-    service: Service | None = None
+    service: GMService | None = None
     get_people_func: Callable[[], Iterable[Person]]
 
     async def update_method() -> GMData:
@@ -305,20 +446,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         try:
             if not service:
-                service = cast(
-                    Service,
-                    await hass.async_add_executor_job(Service, cf_path, username),
+                service = await hass.async_add_executor_job(
+                    GMService, cf_path, username
                 )
                 if create_acct_entity:
                     get_people_func = service.get_all_people
                 else:
                     get_people_func = service.get_shared_people
             people = await hass.async_add_executor_job(get_people_func)
-            return {person.id: PersonData.from_person(person) for person in people}
         except (InvalidCookieFile, InvalidCookies) as err:
-            raise ConfigEntryAuthFailed(err) from err
-        except InvalidData as err:
-            raise UpdateFailed(err) from err
+            raise ConfigEntryAuthFailed(f"{err.__class__.__name__}: {err}") from err
+        except (RequestException, InvalidData) as err:
+            raise UpdateFailed(f"{err.__class__.__name__}: {err}") from err
+        return {
+            UniqueID(cast(str, person.id)): PersonData.from_person(person)
+            for person in people
+        }
 
     coordinator = GMDataUpdateCoordinator(
         hass,
