@@ -63,7 +63,7 @@ This can cause an `unknown` or `unavailable` state when no data was previously r
 
 The new implementation will always use non-location data (battery level, etc.) regardless of the `last_seen` timestamp.
 
-Location data (`latitude`, etc.) will be used, even if it is "inaccurate" (i.e., does not meet the [set limit](#gps-accuracy-limit)
+Location data (`latitude`, etc.) will be used, even if it is "inaccurate" (i.e., does not meet the [set limit](#gps-accuracy-limit)),
 when there is no previous location data (e.g., the first time the entity is created),
 or if the previous location is also inaccurate, as long as the new data is at least as accurate as the old data.
 Once "accurate" location data is used, however, it will only be replaced by newer, accurate location data.
@@ -111,7 +111,7 @@ The email address for the Google account to be used for retrieving shared locati
 ### Cookies File
 
 A cookies file must be [obtained](#obtaining-a-cookies-file) that authenticates and authorizes the user to access the specified Google account.
-If an existing cookies file exists from the legacy implementation, and it is still valid, an option will be presented to use that file.
+If a cookies file exists from the legacy implementation, and it is still valid, an option will be presented to use that file.
 If not, a new cookies file can be uploaded via file browsing or drag & drop.
 There is no requirement for the file's name as there was in the legacy implementation.
 
@@ -139,7 +139,7 @@ See the description above about "Refined Filtering of Data Updates" for more inf
 
 ### Update Period
 
-This option control the time between requests for updates.
+This option controls the time between requests for updates.
 
 ## Account Strategies
 
@@ -148,16 +148,16 @@ This section attempts to explain why & when you might want to add multiple accou
 
 The main things to consider are:
 1. The "account entity", if available and used, will be missing some data (as explained in [Account Tracker Entity](#account-tracker-entity).)
-2. Which account, or accounts, others need to share their location with.
+2. Which account (or accounts) others need to share their location with.
 
-For strategies below it is assumed that everyone you care about tracking has already shared their location with your personal Google Account,
+For the strategies described below, it is assumed that everyone you care about tracking has already shared their location with your personal Google Account,
 or is willing to do so.
 
 Strategy | Use Acct Entity | Accts shared w/ HA only Acct | Advantages | Disadvantages
 -|-|-|-|-
 Personal acct only | Yes | N/A | No additional accts to create & manage. | Your personal tracker will be missing some data.
 HA only acct | No | Everybody | Your personal tracker will _not_ be missing data. Everyone can decide if they want to share their location w/ HA. | Create & manage additional Google Acct. Everyone has to share their location with another Google acct.
-Personal acct + HA only acct | No | Only your personal acct | Your personal tracker will _not_ be missing data. | Create & manage additional Google Acct. Others cannot independently control data being shared with HA.
+Personal acct + HA only acct | No | Only your personal acct | Your personal tracker will _not_ be missing data. Nobody else has to change their location sharing. | Create & manage additional Google Acct. Others cannot independently control data being shared with HA.
 
 The last strategy is probably the best overall, but one of the other two may better suit your personal situation or needs.
 
