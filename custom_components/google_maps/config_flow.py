@@ -56,6 +56,7 @@ from .const import (
     DEF_SCAN_INTERVAL_SEC,
     DOMAIN,
 )
+from .cookies import CHROME_PROCEDURE, EDGE_PROCEDURE, FIREFOX_PROCEDURE
 
 _LOGGER = logging.getLogger(__name__)
 _CONF_UPDATE_COOKIES = "update_cookies"
@@ -117,14 +118,14 @@ class GoogleMapsFlow(FlowHandler):
         if user_input is not None:
             if not user_input[_CONF_USE_EXISTING_COOKIES]:
                 del self._cookies
-                return await self.async_step_cookies_upload()
+                return await self.async_step_get_cookies_procedure_menu()
             if self._reauth_entry:
                 return await self.async_step_reauth_done()
             return await self.async_step_account_entity()
 
         cf_path = old_cookies_file_path(self.hass, self._username)
         if not cf_path.is_file():
-            return await self.async_step_cookies_upload()
+            return await self.async_step_get_cookies_procedure_menu()
         if not await self.hass.async_add_executor_job(self._cookies_file_ok, cf_path):
             return await self.async_step_old_cookies_invalid(cf_path=cf_path)
 
@@ -152,7 +153,7 @@ class GoogleMapsFlow(FlowHandler):
     ) -> FlowResult:
         """Upload a cookies file."""
         if user_input is not None:
-            return await self.async_step_cookies_upload()
+            return await self.async_step_get_cookies_procedure_menu()
 
         assert cf_path
         return self.async_show_form(
@@ -161,6 +162,54 @@ class GoogleMapsFlow(FlowHandler):
                 "username": self._username,
                 "cookies_file": str(cf_path.name),
             },
+            last_step=False,
+        )
+
+    async def async_step_get_cookies_procedure_menu(
+        self, _: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Display a list of procedures for obtaining a cookies file."""
+        return self.async_show_menu(
+            step_id="get_cookies_procedure_menu",
+            menu_options=["chrome", "edge", "firefox", "cookies_upload"],
+        )
+
+    async def async_step_chrome(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Display detailed instructions for Google Chrome."""
+        if user_input is not None:
+            return await self.async_step_cookies_upload()
+
+        return self.async_show_form(
+            step_id="chrome",
+            description_placeholders={"procedure": CHROME_PROCEDURE},
+            last_step=False,
+        )
+
+    async def async_step_edge(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Display detailed instructions for Microsoft Edge."""
+        if user_input is not None:
+            return await self.async_step_cookies_upload()
+
+        return self.async_show_form(
+            step_id="edge",
+            description_placeholders={"procedure": EDGE_PROCEDURE},
+            last_step=False,
+        )
+
+    async def async_step_firefox(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Display detailed instructions for Mozilla Firefox."""
+        if user_input is not None:
+            return await self.async_step_cookies_upload()
+
+        return self.async_show_form(
+            step_id="firefox",
+            description_placeholders={"procedure": FIREFOX_PROCEDURE},
             last_step=False,
         )
 
@@ -200,7 +249,7 @@ class GoogleMapsFlow(FlowHandler):
         """Use uploaded cookie file or try again."""
         menu_options = [
             "reauth_done" if self._reauth_entry else "account_entity",
-            "cookies_upload",
+            "get_cookies_procedure_menu",
         ]
         return self.async_show_menu(
             step_id="uploaded_cookie_menu",

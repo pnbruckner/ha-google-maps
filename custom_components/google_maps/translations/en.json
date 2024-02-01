@@ -14,6 +14,10 @@
                 "description": "Unlike trackers created for accounts that share their location with {username}, the tracker created for the {username} account holder will be missing some data.\n\nSee {doc} for more information.\n\nShould a tracker be created for the {username} account holder?",
                 "title": "Account Tracker Entity"
             },
+            "chrome": {
+                "description": "{procedure}",
+                "title": "Get Cookies Using Google Chrome"
+            },
             "cookies": {
                 "data": {
                     "use_existing_cookies": "Use existing cookies file"
@@ -27,6 +31,24 @@
                 },
                 "description": "Upload cookies file for {username}.",
                 "title": "Upload Cookies File"
+            },
+            "edge": {
+                "description": "{procedure}",
+                "title": "Get Cookies Using Microsoft Edge"
+            },
+            "firefox": {
+                "description": "{procedure}",
+                "title": "Get Cookies Using Mozilla Firefox"
+            },
+            "get_cookies_procedure_menu": {
+                "description": "Choose browser type for detailed instructions on how to get a cookies file.",
+                "menu_options": {
+                    "chrome": "Google Chrome",
+                    "cookies_upload": "Continue straight to uploading a file",
+                    "edge": "Microsoft Edge",
+                    "firefox": "Mozilla Firefox"
+                },
+                "title": "Get a Cookies File"
             },
             "max_gps_accuracy": {
                 "data": {
@@ -49,7 +71,7 @@
                 "description": "Expiration: {expiration}.",
                 "menu_options": {
                     "account_entity": "Continue with cookies",
-                    "cookies_upload": "Upload a different cookies file",
+                    "get_cookies_procedure_menu": "Upload a different cookies file",
                     "reauth_done": "Use cookies"
                 },
                 "title": "Uploaded Cookies"
@@ -101,6 +123,10 @@
                 "description": "Unlike trackers created for accounts that share their location with {username}, the tracker created for the {username} account holder will be missing some data.\n\nSee {doc} for more information.\n\nShould a tracker be created for the {username} account holder?",
                 "title": "Account Tracker Entity"
             },
+            "chrome": {
+                "description": "{procedure}",
+                "title": "Get Cookies Using Google Chrome"
+            },
             "cookies": {
                 "data": {
                     "use_existing_cookies": "Use existing cookies file"
@@ -114,6 +140,24 @@
                 },
                 "description": "Upload cookies file for {username}.",
                 "title": "Upload Cookies File"
+            },
+            "edge": {
+                "description": "{procedure}",
+                "title": "Get Cookies Using Microsoft Edge"
+            },
+            "firefox": {
+                "description": "{procedure}",
+                "title": "Get Cookies Using Mozilla Firefox"
+            },
+            "get_cookies_procedure_menu": {
+                "description": "Choose browser type for detailed instructions on how to get a cookies file.",
+                "menu_options": {
+                    "chrome": "Google Chrome",
+                    "cookies_upload": "Continue straight to uploading a file",
+                    "edge": "Microsoft Edge",
+                    "firefox": "Mozilla Firefox"
+                },
+                "title": "Get a Cookies File"
             },
             "init": {
                 "data": {
@@ -143,7 +187,7 @@
                 "description": "Expiration: {expiration}.",
                 "menu_options": {
                     "account_entity": "Continue with cookies",
-                    "cookies_upload": "Upload a different cookies file"
+                    "get_cookies_procedure_menu": "Upload a different cookies file"
                 },
                 "title": "Uploaded Cookies"
             }
