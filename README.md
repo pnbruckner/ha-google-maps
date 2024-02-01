@@ -100,7 +100,24 @@ where `<config>` is your Home Assistant configuration directory.
 
 </details>
 
-## Configuration Options
+## Configuration
+
+One or more Google account can be added. See [Account Strategies](#account-strategies) below for help in deciding which Google accounts to use, and possibly create, and how to set up location sharing between Google accounts.
+
+To add an account, you can use this My Button:
+
+[**ADD INTEGRATION TO MY HA**](https://my.home-assistant.io/redirect/config_flow_start?domain=google_maps)
+
+Alternatively, go to Settings -> Devices & services and click the **`+ ADD INTEGRATION`** button.
+Find or search for "Google Maps", click on it, then follow the prompts.
+
+> NOTE:
+> If you see "Google" in the list, do NOT click on it.
+> It will take you to a sub-list of all Google related integrations.
+> There will also be a "Google Maps" item in that list, but it is for the built-in integration, not this custom one.
+
+<details>
+<summary>Configuration Options</summary>
 
 The following options are presented during initial setup and (except for username) when reconfiguring the integration entry (i.e., via the `CONFIGURE` button.)
 
@@ -141,9 +158,11 @@ See the description above about "Refined Filtering of Data Updates" for more inf
 
 This option controls the time between requests for updates.
 
+</details>
+
 ## Account Strategies
 
-It is possible to "register" more than one Google account.
+As mentioned above, it is possible to add more than one Google account for this integration.
 This section attempts to explain why & when you might want to add multiple accounts.
 
 The main things to consider are:
@@ -155,13 +174,95 @@ or is willing to do so.
 
 Strategy | Use Acct Entity | Accts shared w/ HA only Acct | Advantages | Disadvantages
 -|-|-|-|-
-Personal acct only | Yes | N/A | No additional accts to create & manage. | Your personal tracker will be missing some data.
+Personal acct only | Yes | N/A | No additional accts to create & manage. Nobody else has to change their location sharing. | Your personal tracker will be missing some data.
 HA only acct | No | Everybody | Your personal tracker will _not_ be missing data. Everyone can decide if they want to share their location w/ HA. | Create & manage additional Google Acct. Everyone has to share their location with another Google acct.
 Personal acct + HA only acct | No | Only your personal acct | Your personal tracker will _not_ be missing data. Nobody else has to change their location sharing. | Create & manage additional Google Acct. Others cannot independently control data being shared with HA.
 
 The last strategy is probably the best overall, but one of the other two may better suit your personal situation or needs.
 
 ## Obtaining a Cookies File
+
+> **IMPORTANT**:
+> 
+> In the procedures that follow you will sign into Google.
+> It is extremely important to NOT log out from Google in the browser you use to get the cookies file.
+> Just close the browser as the procedures instruction _without_ logging out first.
+
+The procedure for each browser type uses the [Get cookies.txt LOCALLY](https://github.com/kairi003/Get-cookies.txt-Locally) extension.
+There is one version of the extension that works in Chrome and Edge, and another for Firefox.
+
+<details>
+<summary>Google Chrome</summary>
+
+1. Install "Get cookies.txt LOCALLY", which can be found by browsing to:
+
+   https://chrome.google.com/webstore/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc
+
+2. Click the Extensions icon (puzzle piece) near the top-right of the browser window,
+   then to the right of "Get cookies.txt LOCALLY" click the three-dot (More options) item
+   and select "Manage extension". Turn on "Allow in Incognito".
+3. Open a new Incognito window and browse to:
+
+   google.com/maps
+
+4. Click on the "Sign in" box in the top-right part of the page and follow the prompts.
+   If a "Don't ask again on this device" box appears, make sure it is checked.
+5. Click the Extensions icon and select "Get cookes.txt LOCALLY".
+   A window will appear with all the cookies for the page.
+6. Make sure "Export Format" is set to Netscape, then click Export (or Export As.)
+7. Immediately close the Incognito window.
+
+</details>
+
+<details>
+<summary>Microsoft Edge</summary>
+
+1. Install "Get cookies.txt LOCALLY", which can be found by browsing to:
+
+   https://chrome.google.com/webstore/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc
+
+2. Click the Extensions icon (puzzle piece) near the top-right of the browser window,
+   then to the right of "Get cookies.txt LOCALLY" click the three-dot (More actions) item
+   and select "Manage extension". Turn on "Allow in InPrivate".
+3. Open a new InPrivate window and browse to:
+
+   google.com/maps
+
+4. Click on the "Sign in" box in the top-right part of the page and follow the prompts.
+   If a "Don't ask again on this device" box appears, make sure it is checked.
+5. Click the Extensions icon and select "Get cookes.txt LOCALLY".
+   A window will appear with all the cookies for the page.
+6. Make sure "Export Format" is set to Netscape, then click Export (or Export As.)
+7. Immediately close the InPrivate window.
+
+</details>
+
+<details>
+<summary>Mozilla Firefox</summary>
+
+1. Install "Get cookies.txt LOCALLY", which can be found by browsing to:
+
+   https://addons.mozilla.org/firefox/addon/get-cookies-txt-locally/
+
+2. After the add-on is installed a window should pop up with an option to
+   "Allow this extension to run in Private Windows". Check that box and click Okay.
+   Alternatively, click the Extensions icon (puzzle piece) near the top-right of the
+   browser window, then to the right of "Get cookies.txt LOCALLY" click the gear icon
+   and select "Manage Extension". For "Run in Private Windows" select "Allow".
+3. Open a new Private window and browse to:
+
+   google.com/maps
+
+4. Click on the "Sign in" box in the top-right part of the page and follow the prompts.
+   If a "Don't ask again on this device" box appears, make sure it is checked.
+5. Click the Extensions icon, then to the right of "Get cookies.txt LOCALLY" click the gear
+   icon and make sure "Always allow on www.google.com" is selected. Click the Extensions icon
+   again and select "Get cookes.txt LOCALLY". A window will appear with all the cookies for
+   the page.
+6. Make sure "Export Format" is set to Netscape, then click Export (or Export As.)
+7. Immediately close the Private window.
+
+</details>
 
 ## Removing Legacy Trackers
 
