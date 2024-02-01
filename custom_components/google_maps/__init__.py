@@ -32,9 +32,10 @@ from homeassistant.const import (
     CONF_USERNAME,
     Platform,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.helpers.issue_registry import (
     IssueSeverity,
     async_create_issue,
@@ -51,6 +52,7 @@ from .const import (
     ATTR_NICKNAME,
     CONF_COOKIES_FILE,
     CONF_CREATE_ACCT_ENTITY,
+    COOKIE_WARNING_PERIOD,
     CREDENTIALS_FILE,
     DOMAIN,
     NAME_PREFIX,
@@ -98,7 +100,7 @@ def exp_2_str(expiration: datetime | None) -> str:
 
 def expiring_soon(expiration: datetime | None) -> bool:
     """Return if cookies are expiring soon."""
-    return expiration is not None and expiration - dt_util.now() < timedelta(weeks=4)
+    return expiration is not None and expiration - dt_util.now() < COOKIE_WARNING_PERIOD
 
 
 class FromAttributesError(Exception):
@@ -473,8 +475,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
     gmi_data.coordinators[cid] = coordinator
 
+    # Since we got past async_config_entry_first_refresh we know cookies haven't expired
+    # yet. Create a repair issue if/when they will expire "soon."
     expiration = get_expiration(await hass.async_add_executor_job(cf_path.read_text))
-    if expiring_soon(expiration):
+
+    @callback
+    def create_issue(_now: datetime | None = None) -> None:
+        """Create repair issue for cookies which are expiring soon."""
         async_create_issue(
             hass,
             DOMAIN,
@@ -489,8 +496,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "username": username,
             },
         )
+
+    if expiring_soon(expiration):
+        create_issue()
     else:
         async_delete_issue(hass, DOMAIN, entry.entry_id)
+        if expiration:
+            entry.async_on_unload(
+                async_track_point_in_time(
+                    hass, create_issue, expiration - COOKIE_WARNING_PERIOD
+                )
+            )
 
     entry.async_on_unload(entry.add_update_listener(entry_updated))
     await hass.config_entries.async_forward_entry_setups(entry, _PLATFORMS)

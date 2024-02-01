@@ -9,6 +9,7 @@ CREDENTIALS_FILE = ".google_maps_location_sharing.cookies"
 
 DEF_SCAN_INTERVAL_SEC = 60
 DEF_SCAN_INTERVAL = timedelta(seconds=DEF_SCAN_INTERVAL_SEC)
+COOKIE_WARNING_PERIOD = timedelta(weeks=4)
 
 ATTR_ADDRESS = "address"
 ATTR_FULL_NAME = "full_name"
