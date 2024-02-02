@@ -168,7 +168,8 @@ This option controls the time between requests for updates.
 
 The ["account holder" tracker entity](#account-tracker-entity), if created,
 will be missing some data that is usually present for the tracker entities created for those that have shared their location with that account.
-Specifically, the following attributes will be missing or invalid:
+Specifically, the name (and entity ID) will be based on the email address, not the actual name associated with the accounr,
+and the following attributes will be missing or invalid:
 
 `battery_charging`, `battery_level`, `entity_picture`, `full_name` & `nickname`
 
