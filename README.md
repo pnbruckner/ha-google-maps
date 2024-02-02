@@ -25,7 +25,7 @@ but managing those cookies is made a bit easier, including:
 - Providing a simplified process to upload a new cookies file.
 - Displaying the expiration date [^1].
 - The creation of a repair issue when they will expire in the near future.
-- Automatically initiating reconfiguration when they expire, either at startup or while Home Assistant is running.
+- Automatically initiating reconfiguration when they do expire.
 
 [^1]: Expiration date is determined by looking for cookies named `__Secure-1PSID` or `__Secure-3PSID`.
 It is not entirely clear these are the only cookies that impact when the set of cookies will expire.
@@ -110,7 +110,7 @@ One or more Google account can be added. See [Account Strategies](#account-strat
 
 To add an account, you can use this My Button:
 
-[**ADD INTEGRATION TO MY HA**](https://my.home-assistant.io/redirect/config_flow_start?domain=google_maps)
+[![add integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start?domain=google_maps)
 
 Alternatively, go to Settings -> Devices & services and click the **`+ ADD INTEGRATION`** button.
 Find or search for "Google Maps", click on it, then follow the prompts.
@@ -123,7 +123,7 @@ Find or search for "Google Maps", click on it, then follow the prompts.
 <details>
 <summary>Configuration Options</summary>
 
-The following options are presented during initial setup and (except for username) when reconfiguring the integration entry (i.e., via the `CONFIGURE` button.)
+The following options are presented when adding a Google account, and (except for username) when reconfiguring it (i.e., via the `CONFIGURE` button.)
 
 ### Google Maps Account Username
 
@@ -140,9 +140,9 @@ There is no requirement for the file's name as there was in the legacy implement
 
 The Google account specified above is used to create `device_tracker` entities for everyone who has shared their location with that account.
 In addition to those shared accounts, the integration can also create a tracker for the account itself if it has been associated with a device (phone, etc.)
-Unfortunately, though, that tracker will be missing some data (battery level, etc.)
+Unfortunately, though, that tracker will be [missing some data](#missing-data-for-account-tracker).
 Since there may not be a device associated with the account, or even if there is, the tracker will be missing some data,
-an option is provided to enable or disable the creation of this "account tracker entity."
+an option is provided to enable or disable the creation of this "account tracker" entity.
 See [Account Strategies](account-strategies) for more detail.
 
 ### GPS Accuracy Limit
@@ -164,23 +164,43 @@ This option controls the time between requests for updates.
 
 </details>
 
+## Missing Data for Account Tracker
+
+The ["account holder" tracker entity](#account-tracker-entity), if created,
+will be missing some data that is usually present for the tracker entities created for those that have shared their location with that account.
+Specifically, the following attributes will be missing or invalid:
+
+`battery_charging`, `battery_level`, `entity_picture`, `full_name` & `nickname`
+
+All other attributes, including those related to location, will be present and valid.
+
 ## Account Strategies
 
-As mentioned above, it is possible to add more than one Google account for this integration.
-This section attempts to explain why & when you might want to add multiple accounts.
+As mentioned in [Configuration](#configuration), it is possible to add more than one Google account for this integration.
+This section explains why & when you might want to add multiple accounts.
 
 The main things to consider are:
-1. The "account entity", if available and used, will be missing some data (as explained in [Account Tracker Entity](#account-tracker-entity).)
+1. The "account tracker", if available and used, will be [missing some data](#missing-data-for-account-tracker).
 2. Which account (or accounts) others need to share their location with.
 
-For the strategies described below, it is assumed that everyone you care about tracking has already shared their location with your personal Google Account,
-or is willing to do so.
+The strategies described below refer to two different Google accounts:
 
-Strategy | Use Acct Entity | Accts shared w/ HA only Acct | Advantages | Disadvantages
+"Pers acct" refers to your own, personal Google account that is associated with a "device"
+(phone, tablet, etc.) from which your location can be obtained.
+
+"Alt acct" refers to an alternate Google account, either one that already exists,
+or one you create just for use with Home Assistant.
+
+For the sake of simplicity, it is assumed that everyone you care to track in Home Assistant
+has already shared their location with your personal Google account,
+or is probably willing to do do.
+However, that may not be the case, so adjust accordingly.
+
+Strategy | Use Acct Tracker | Acct Sharing | Advantages | Disadvantages
 -|-|-|-|-
-Personal acct only | Yes | N/A | No additional accts to create & manage. Nobody else has to change their location sharing. | Your personal tracker will be missing some data.
-HA only acct | No | Everybody | Your personal tracker will _not_ be missing data. Everyone can decide if they want to share their location w/ HA. | Create & manage additional Google Acct. Everyone has to share their location with another Google acct.
-Personal acct + HA only acct | No | Only your personal acct | Your personal tracker will _not_ be missing data. Nobody else has to change their location sharing. | Create & manage additional Google Acct. Others cannot independently control data being shared with HA.
+Pers acct only | Yes | Others share w/ Pers acct. | No additional accts to create & manage. No additional location sharing to set up. | Your personal tracker will be missing some data. Nobody can independently control data being shared with HA.
+Alt acct only | No | Everybody who wants to, including yourself, shares w/ Alt acct. | Your personal tracker will _not_ be missing data. Everyone can decide if they want to share their location w/ HA, including yourself. | Possibly create & manage an additional acct. People may need to share their location w/ a 2nd acct.
+Pers & Alt accts | No | You share w/ Alt acct, everyone else shares w/ Pers acct. | Your personal tracker will _not_ be missing data. Nobody else has to change their location sharing. | Create & manage additional Google Acct. Others cannot independently control data being shared with HA.
 
 The last strategy is probably the best overall, but one of the other two may better suit your personal situation or needs.
 
