@@ -81,9 +81,13 @@ You can use HACS to manage the installation and provide update notifications.
 
 1. Add this repo as a [custom repository](https://hacs.xyz/docs/faq/custom_repositories/):
 
-```text
-https://github.com/pnbruckner/ha-google-maps
-```
+   ```text
+   https://github.com/pnbruckner/ha-google-maps
+   ```
+   Or use this button:
+   
+   [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=pnbruckner&repository=ha-google-maps&category=integration)
+
 
 2. Install the integration using the appropriate button on the HACS Integrations page. Search for "google maps".
 
