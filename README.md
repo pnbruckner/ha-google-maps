@@ -100,6 +100,10 @@ where `<config>` is your Home Assistant configuration directory.
 
 </details>
 
+### Versions
+
+This custom integration supports HomeAssistant versions 2023.7.0 or newer.
+
 ## Configuration
 
 One or more Google account can be added. See [Account Strategies](#account-strategies) below for help in deciding which Google accounts to use, and possibly create, and how to set up location sharing between Google accounts.
