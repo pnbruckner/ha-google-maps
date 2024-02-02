@@ -275,7 +275,13 @@ class GoogleMapsFlow(FlowHandler):
             data_schema,
             {CONF_CREATE_ACCT_ENTITY: self.options.get(CONF_CREATE_ACCT_ENTITY, True)},
         )
-        doc = (await async_get_integration(self.hass, DOMAIN)).documentation
+        if doc := (await async_get_integration(self.hass, DOMAIN)).documentation:
+            doc = (
+                "[Missing Data for Account Tracker]"
+                f"({doc}#missing-data-for-account-tracker)"
+            )
+        else:
+            doc = "the integration's documentation"
         return self.async_show_form(
             step_id="account_entity",
             data_schema=data_schema,
