@@ -113,7 +113,7 @@ This custom integration supports HomeAssistant versions 2023.7.0 or newer.
 
 ## Configuration
 
-One or more Google account can be added. See [Account Strategies](#account-strategies) below for help in deciding which Google accounts to use, and possibly create, and how to set up location sharing between Google accounts.
+One or more Google account can be added. See [Account Strategies](#account-strategies) below for help in deciding which Google accounts to use, and possibly create, and how to set up location sharing between Google accounts. If you choose a strategy that uses more than one Google account, obtain the cookies file for each account and upload them individually by adding the integration once for each file. You can also use the **`ADD ENTRY`** button within the Google Maps integration page to add the additional Google accounts after the first one has been created.
 
 To add an account, you can use this My Button:
 
@@ -210,7 +210,7 @@ Pers acct only | Yes | Others share w/ Pers acct. | No additional accts to creat
 Alt acct only | No | Everybody who wants to, including yourself, shares w/ Alt acct. | Your personal tracker will _not_ be missing data. Everyone can decide if they want to share their location w/ HA, including yourself. | Possibly create & manage an additional acct. People may need to share their location w/ a 2nd acct.
 Pers & Alt accts | No | You share w/ Alt acct, everyone else shares w/ Pers acct. | Your personal tracker will _not_ be missing data. Nobody else has to change their location sharing. | Create & manage additional Google Acct. Others cannot independently control data being shared with HA.
 
-The last strategy is probably the best overall, but one of the other two may better suit your personal situation or needs.
+The last strategy is probably the best overall, and if chosen will require obtaining the cookies files for both accounts and adding them both to the integration separately. One of the other two strategies may better suit your personal situation or needs.
 
 ## Obtaining a Cookies File
 
