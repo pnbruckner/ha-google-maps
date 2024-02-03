@@ -22,8 +22,11 @@ This allows the user to change the entity's name, ID, associated area, etc., as 
 The integration can now be set up via the UI.
 YAML-based configuration is still supported but deprecated.
 
-Entities created via the UI do not conflict with any existing "legacy" entities previously created by the built-in integration
-(i.e., those that use .)
+Entities created via the UI do not conflict with any existing "legacy" entities previously created by the built-in integration.
+The legacy entity IDs use serial numbers or email addresses, whereas the newer IDs use full names.
+Therefore, it is possible to continue using the legacy entities even after new ones are created via the UI.
+Once you are satisfied the new ones work, and have adjusted your system to use the new IDs,
+you can [remove](#removing-legacy-trackers) the legacy entities.
 
 </details>
 
