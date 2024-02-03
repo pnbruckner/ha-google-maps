@@ -3,6 +3,7 @@
 This is a custom version of the Home Assistant built-in [Google Maps](https://www.home-assistant.io/integrations/google_maps/) integration.
 
 The main new features are:
+- Entity-Based Instead of Legacy
 - UI-Based Configuration
 - Simplified Cookie Management
 - Enhanced Error Checking and Handling
