@@ -5,13 +5,25 @@ This is a custom version of the Home Assistant built-in [Google Maps](https://ww
 The main new features are:
 
 <details>
+<summary>Entity-Based Instead of Legacy</summary>
+
+The built-in integration is still what is referred to as a "legacy" tracker.
+The entities it creates are customized via [`known_devices.yaml`](https://www.home-assistant.io/integrations/device_tracker#known_devicesyaml).
+
+This custom integration is now "Entity-based".
+The entities it creates are managed in the Entity Registry, just like with most newer integrations.
+This allows the user to change the entity's name, ID, associated area, etc., as well as enable/disable the entity.
+
+</details>
+
+<details>
 <summary>UI-Based Configuration</summary>
 
 The integration can now be set up via the UI.
 YAML-based configuration is still supported but deprecated.
 
 Entities created via the UI do not conflict with any existing "legacy" entities previously created by the built-in integration
-(i.e., those that use [`known_devices.yaml`](https://www.home-assistant.io/integrations/device_tracker#known_devicesyaml).)
+(i.e., those that use .)
 
 </details>
 
