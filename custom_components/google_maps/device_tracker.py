@@ -33,7 +33,7 @@ from homeassistant.helpers import config_validation as cv, entity_registry as er
 try:
     from homeassistant.helpers.device_registry import DeviceInfo
 except ImportError:
-    from homeassistant.helpers.entity import DeviceInfo
+    from homeassistant.helpers.entity import DeviceInfo  # type: ignore[attr-defined]
 
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import track_time_interval
