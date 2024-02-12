@@ -1,7 +1,7 @@
 """The google_maps component."""
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import asdict as dc_asdict, dataclass, field
 from datetime import datetime, timedelta
 from functools import partial
@@ -130,8 +130,8 @@ class LocationData:
             if isinstance(last_seen, datetime):
                 return last_seen
             last_seen = dt_util.parse_datetime(last_seen)
-        except (KeyError, TypeError):
-            raise FromAttributesError
+        except (KeyError, TypeError) as err:
+            raise FromAttributesError from err
         if last_seen is None:
             raise FromAttributesError
         return last_seen
@@ -177,8 +177,8 @@ class LocationData:
                 attrs[ATTR_LATITUDE],
                 attrs[ATTR_LONGITUDE],
             )
-        except KeyError:
-            raise FromAttributesError
+        except KeyError as err:
+            raise FromAttributesError from err
 
 
 @dataclass(frozen=True)
@@ -231,8 +231,8 @@ class MiscData:
                 full_name,
                 attrs[ATTR_NICKNAME],
             )
-        except KeyError:
-            raise FromAttributesError
+        except KeyError as err:
+            raise FromAttributesError from err
 
 
 @dataclass(frozen=True)
@@ -351,7 +351,9 @@ class GMIntegData:
 class GMService(Service):  # type: ignore[misc]
     """Service class with better error detection, handling & reporting."""
 
-    def __init__(
+    _data: list[str]
+
+    def __init__(  # pylint: disable=useless-parent-delegation
         self, cookies_file: str | PathLike, authenticating_account: str
     ) -> None:
         """Initialize service."""
@@ -376,18 +378,28 @@ class GMService(Service):  # type: ignore[misc]
             raise
         return resp
 
-    def _get_data(self) -> list[str]:
-        """Get data, parse and check for invalid session."""
-        data = cast(
+    def get_resp_and_parse(self) -> None:
+        """Get server response, parse and check for invalid session."""
+        self._data = cast(
             list[str],
             self._parse_location_data(self._get_server_response(self._session).text),
         )
         try:
-            if data[6] == "GgA=":
+            if self._data[6] == "GgA=":
                 raise InvalidCookies("Invalid session indicated")
         except IndexError:
-            raise InvalidData(f"Unexpected data: {data}") from None
-        return data
+            raise InvalidData(f"Unexpected data: {self._data}") from None
+
+    def _get_data(self) -> list[str]:
+        """Get last received & parsed data."""
+        return self._data
+
+    def get_all_people(self) -> list[Person]:
+        """Retrieve all people sharing their location."""
+        people = cast(list[Person], self.get_shared_people())
+        if auth_person := self.get_authenticated_person():
+            people.append(auth_person)
+        return people
 
     # def substitute_cookies(self, cookies_file_contents: str) -> None:
     #     """Create new session with different cookies that are NOT validated."""
@@ -406,6 +418,9 @@ class GMService(Service):  # type: ignore[misc]
 async def entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle config entry update."""
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+PeopleFunc = Callable[[], list[Person]]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -440,7 +455,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         unique_ids.release(cid, username)
 
     service: GMService | None = None
-    get_people_func: Callable[[], Iterable[Person]]
+    get_people_func: PeopleFunc
 
     async def update_method() -> GMData:
         """Get shared location data."""
@@ -448,14 +463,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         try:
             if not service:
-                service = await hass.async_add_executor_job(
-                    GMService, cf_path, username
+                service = cast(
+                    GMService,
+                    await hass.async_add_executor_job(GMService, cf_path, username),
                 )
                 if create_acct_entity:
                     get_people_func = service.get_all_people
                 else:
-                    get_people_func = service.get_shared_people
-            people = await hass.async_add_executor_job(get_people_func)
+                    get_people_func = cast(PeopleFunc, service.get_shared_people)
+            await hass.async_add_executor_job(service.get_resp_and_parse)
+            people = get_people_func()
         except (InvalidCookieFile, InvalidCookies) as err:
             raise ConfigEntryAuthFailed(f"{err.__class__.__name__}: {err}") from err
         except (RequestException, InvalidData) as err:
