@@ -225,7 +225,11 @@ Pers acct only | Yes | Others share w/ Pers acct. | No additional accts to creat
 Alt acct only | No | Everybody who wants to, including yourself, shares w/ Alt acct. | Your personal tracker will _not_ be missing data. Everyone can decide if they want to share their location w/ HA, including yourself. | Possibly create & manage an additional acct. People may need to share their location w/ a 2nd acct.
 Pers & Alt accts | No | You share w/ Alt acct, everyone else shares w/ Pers acct. | Your personal tracker will _not_ be missing data. Nobody else has to change their location sharing. | Create & manage additional Google Acct. Others cannot independently control data being shared with HA.
 
-The last strategy is probably the best overall, and if chosen will require obtaining the cookies files for both accounts and adding them both to the integration separately. One of the other two strategies may better suit your personal situation or needs.
+The last strategy is probably the best overall, and if chosen will require obtaining the cookies files for both accounts and adding them both to the integration separately.
+One of the other two strategies may better suit your personal situation or needs.
+
+> **NOTE**: Some people have discovered that using their personal account causes the cookies to expire very quickly.
+> If you are experiencing this, then the "Alt acct only" strategy may be your only viable option.
 
 ## Obtaining a Cookies File
 
