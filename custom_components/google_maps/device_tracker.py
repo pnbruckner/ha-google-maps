@@ -336,30 +336,29 @@ class GoogleMapsDeviceTracker(
         await super().async_added_to_hass()
 
         # Restore state if possible.
-        if not (last_state := await self.async_get_last_state()):
-            return
+        if last_state := await self.async_get_last_state():
+            # extra_restore_state_data was not implemented in 1.0.0b2 or earlier, so if
+            # it's not available, try restoring from saved attributes like what was done
+            # then.
+            last_extra_data = None
+            if res_last_extra_data := await self.async_get_last_extra_data():
+                last_extra_data = PersonData.from_dict(res_last_extra_data.as_dict())
+            attrs = last_state.attributes
 
-        # extra_restore_state_data was not implemented in 1.0.0b2 or earlier, so if it's
-        # not available, try restoring from saved attributes like what was done then.
-        last_extra_data = None
-        if restored_last_extra_data := await self.async_get_last_extra_data():
-            last_extra_data = PersonData.from_dict(restored_last_extra_data.as_dict())
-        attrs = last_state.attributes
-
-        # Always restore loc data as "previous location" first, then overwrite with new
-        # location below if available and "better."
-        if last_extra_data:
-            self._loc = last_extra_data.loc
-        else:
-            with suppress(FromAttributesError):
-                self._loc = LocationData.from_attributes(attrs)
-        # Only restore misc data if we didn't get any when initialized.
-        if self._misc is None:
+            # Always restore loc data as "previous location" first, then overwrite with
+            # new location below if available and "better."
             if last_extra_data:
-                self._misc = last_extra_data.misc
+                self._loc = last_extra_data.loc
             else:
                 with suppress(FromAttributesError):
-                    self._misc = MiscData.from_attributes(attrs, self._full_name)
+                    self._loc = LocationData.from_attributes(attrs)
+            # Only restore misc data if we didn't get any when initialized.
+            if self._misc is None:
+                if last_extra_data:
+                    self._misc = last_extra_data.misc
+                else:
+                    with suppress(FromAttributesError):
+                        self._misc = MiscData.from_attributes(attrs, self._full_name)
 
         # Now that previous state has been restored, update with new data if possible.
         if not (data := self.coordinator.data.get(cast(UniqueID, self.unique_id))):
