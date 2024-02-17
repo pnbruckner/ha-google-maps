@@ -360,12 +360,20 @@ class GMService(Service):  # type: ignore[misc]
         self, cookies_file: str | PathLike, authenticating_account: str
     ) -> None:
         """Initialize service."""
-        super().__init__(cookies_file, authenticating_account)
+        try:
+            super().__init__(cookies_file, authenticating_account)
+        finally:
+            self._dump_cookies()
 
     @property
     def cookies(self) -> MozillaCookieJar:
         """Return session's cookies."""
         return cast(MozillaCookieJar, self._session.cookies)
+
+    @cookies.setter
+    def cookies(self, cookies: MozillaCookieJar) -> None:
+        """Set session's cookies."""
+        self._session.cookies = cookies  # type: ignore[assignment]
 
     @staticmethod
     def _get_server_response(session: Session) -> Response:
@@ -388,29 +396,34 @@ class GMService(Service):  # type: ignore[misc]
 
     def _get_authenticated_session(self, cookies_file: str | PathLike) -> Session:
         """Get authenticated session."""
-        cookies = MozillaCookieJar(cookies_file)
+        self._session = Session()
+        self.cookies = MozillaCookieJar(cookies_file)
         try:
-            cookies.load()
+            self.cookies.load()
         except (FileNotFoundError, LoadError) as err:
             raise InvalidCookieFile(str(err)) from None
-        if not {cookie.name for cookie in cookies} & VALID_COOKIE_NAMES:
+        if not {cookie.name for cookie in self.cookies} & VALID_COOKIE_NAMES:
             raise InvalidCookies(f"Missing either of {VALID_COOKIE_NAMES} cookies!")
-        self._update_saved_cookies(cookies)
-        session = Session()
-        session.cookies = cookies  # type: ignore[assignment]
-        return session
+        self._update_saved_cookies(self.cookies)
+        return self._session
 
     def get_resp_and_parse(self) -> None:
         """Get server response, parse and check for invalid session."""
-        self._data = cast(
-            list[str],
-            self._parse_location_data(self._get_server_response(self._session).text),
-        )
         try:
-            if self._data[6] == "GgA=":
-                raise InvalidCookies("Invalid session indicated")
-        except IndexError:
-            raise InvalidData(f"Unexpected data: {self._data}") from None
+            self._data = cast(
+                list[str],
+                self._parse_location_data(
+                    self._get_server_response(self._session).text
+                ),
+            )
+            try:
+                if self._data[6] == "GgA=":
+                    raise InvalidCookies("Invalid session indicated")
+            except IndexError:
+                raise InvalidData(f"Unexpected data: {self._data}") from None
+        except InvalidCookies:
+            self._dump_cookies()
+            raise
 
     def _get_data(self) -> list[str]:
         """Get last received & parsed data."""
@@ -433,6 +446,25 @@ class GMService(Service):  # type: ignore[misc]
         """Save session's cookies."""
         self.cookies.save(ignore_discard=True)
         self._update_saved_cookies(self.cookies)
+
+    def _dump_cookies(self) -> None:
+        """Dump cookies & expiration dates to log."""
+        data: list[tuple[str, datetime | None]] = []
+        for cookie in self.cookies:
+            if cookie.expires:
+                expiration = dt_util.as_local(
+                    dt_util.utc_from_timestamp(cookie.expires)
+                )
+            else:
+                expiration = None
+            data.append((cookie.name, expiration))
+        data.sort(key=lambda d: d[0])
+        data.sort(key=lambda d: datetime.min if d[1] is None else d[1])
+        _LOGGER.debug(
+            "%s: cookies: %s",
+            self.email,
+            ", ".join([f"{name}: {exp}" for name, exp in data]),
+        )
 
 
 async def entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -597,6 +629,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, _PLATFORMS)
     if unload_ok:
+        # TODO: Save cookies & close session???
         gmi_data = cast(GMIntegData, hass.data[DOMAIN])
         del gmi_data.coordinators[cast(ConfigID, entry.entry_id)]
     return unload_ok
