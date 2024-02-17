@@ -5,6 +5,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict as dc_asdict, dataclass, field
 from datetime import datetime, timedelta
 from functools import partial
+from http.cookiejar import LoadError, MozillaCookieJar
 import logging
 from os import PathLike
 from pathlib import Path
@@ -30,9 +31,10 @@ from homeassistant.const import (
     ATTR_LONGITUDE,
     CONF_SCAN_INTERVAL,
     CONF_USERNAME,
+    EVENT_HOMEASSISTANT_FINAL_WRITE,
     Platform,
 )
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.event import async_track_point_in_time
@@ -378,6 +380,19 @@ class GMService(Service):  # type: ignore[misc]
             raise
         return resp
 
+    def _get_authenticated_session(self, cookies_file: str | PathLike) -> Session:
+        """Get authenticated session."""
+        cookies = MozillaCookieJar(cookies_file)
+        try:
+            cookies.load()
+        except (FileNotFoundError, LoadError) as err:
+            raise InvalidCookieFile(str(err)) from None
+        if not {cookie.name for cookie in cookies} & VALID_COOKIE_NAMES:
+            raise InvalidCookies(f"Missing either of {VALID_COOKIE_NAMES} cookies!")
+        session = Session()
+        session.cookies = cookies  # type: ignore[assignment]
+        return session
+
     def get_resp_and_parse(self) -> None:
         """Get server response, parse and check for invalid session."""
         self._data = cast(
@@ -401,18 +416,9 @@ class GMService(Service):  # type: ignore[misc]
             people.append(auth_person)
         return people
 
-    # def substitute_cookies(self, cookies_file_contents: str) -> None:
-    #     """Create new session with different cookies that are NOT validated."""
-    #     cookie_entries = [line.strip() for line in cookies_file_contents.splitlines()
-    #                         if not line.strip().startswith('#') and line]
-    #     cookies = []
-    #     for entry in cookie_entries:
-    #         domain, flag, path, secure, expiry, name, value, *rest = entry.split()
-    #         cookies.append(Cookie(domain, flag, path, secure, expiry, name, value, rest)) # type: ignore
-    #     session = Session()
-    #     for cookie in cookies:
-    #         session.cookies.set(**cookie.to_dict())
-    #     self._session = session
+    def save_cookies(self) -> None:
+        """Save session's cookies."""
+        cast(MozillaCookieJar, self._session.cookies).save(ignore_discard=True)
 
 
 async def entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -456,10 +462,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     service: GMService | None = None
     get_people_func: PeopleFunc
+    cookies_last_saved: datetime
 
     async def update_method() -> GMData:
         """Get shared location data."""
-        nonlocal service, get_people_func
+        nonlocal service, get_people_func, cookies_last_saved
 
         try:
             if not service:
@@ -471,7 +478,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     get_people_func = service.get_all_people
                 else:
                     get_people_func = cast(PeopleFunc, service.get_shared_people)
+                cookies_last_saved = dt_util.now()
             await hass.async_add_executor_job(service.get_resp_and_parse)
+            if (now := dt_util.now()) - cookies_last_saved > timedelta(minutes=15):
+                cookies_last_saved = now
+                hass.async_add_executor_job(service.save_cookies)
             people = get_people_func()
         except (InvalidCookieFile, InvalidCookies) as err:
             raise ConfigEntryAuthFailed(f"{err.__class__.__name__}: {err}") from err
@@ -525,7 +536,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
             )
 
+    @callback
+    def save_cookies_at_stop(_: Event) -> None:
+        """Save session's cookies at Home Asistant stop."""
+        if not service:
+            return
+        _LOGGER.debug("%s: Saving cookies", entry.title)
+        hass.async_add_executor_job(service.save_cookies)
+
     entry.async_on_unload(entry.add_update_listener(entry_updated))
+    entry.async_on_unload(
+        hass.bus.async_listen_once(
+            EVENT_HOMEASSISTANT_FINAL_WRITE, save_cookies_at_stop
+        )
+    )
     await hass.config_entries.async_forward_entry_setups(entry, _PLATFORMS)
     return True
 
