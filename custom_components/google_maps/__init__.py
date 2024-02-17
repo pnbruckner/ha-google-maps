@@ -354,12 +354,18 @@ class GMService(Service):  # type: ignore[misc]
     """Service class with better error detection, handling & reporting."""
 
     _data: list[str]
+    saved_cookies: dict[str, tuple[int | None, str | None]]
 
     def __init__(  # pylint: disable=useless-parent-delegation
         self, cookies_file: str | PathLike, authenticating_account: str
     ) -> None:
         """Initialize service."""
         super().__init__(cookies_file, authenticating_account)
+
+    @property
+    def cookies(self) -> MozillaCookieJar:
+        """Return session's cookies."""
+        return cast(MozillaCookieJar, self._session.cookies)
 
     @staticmethod
     def _get_server_response(session: Session) -> Response:
@@ -389,6 +395,7 @@ class GMService(Service):  # type: ignore[misc]
             raise InvalidCookieFile(str(err)) from None
         if not {cookie.name for cookie in cookies} & VALID_COOKIE_NAMES:
             raise InvalidCookies(f"Missing either of {VALID_COOKIE_NAMES} cookies!")
+        self._update_saved_cookies(cookies)
         session = Session()
         session.cookies = cookies  # type: ignore[assignment]
         return session
@@ -416,9 +423,16 @@ class GMService(Service):  # type: ignore[misc]
             people.append(auth_person)
         return people
 
+    def _update_saved_cookies(self, cookies: MozillaCookieJar) -> None:
+        """Get data for saved cookies."""
+        self.saved_cookies = {
+            cookie.name: (cookie.expires, cookie.value) for cookie in cookies
+        }
+
     def save_cookies(self) -> None:
         """Save session's cookies."""
-        cast(MozillaCookieJar, self._session.cookies).save(ignore_discard=True)
+        self.cookies.save(ignore_discard=True)
+        self._update_saved_cookies(self.cookies)
 
 
 async def entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -464,6 +478,41 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     get_people_func: PeopleFunc
     cookies_last_saved: datetime
 
+    @callback
+    def save_cookies_if_changed(event: Event | None = None) -> None:
+        """Save session's cookies."""
+        nonlocal cookies_last_saved
+
+        if not service:
+            return
+        cur_cookies = {
+            cookie.name: (cookie.expires, cookie.value) for cookie in service.cookies
+        }
+        if (
+            cur_cookies == service.saved_cookies
+            or event is None
+            and dt_util.now() - cookies_last_saved < timedelta(minutes=15)
+        ):
+            return
+
+        msg: list[str] = []
+        cur_names = set(cur_cookies)
+        saved_names = set(service.saved_cookies)
+        if dropped := saved_names - cur_names:
+            msg.append(f"dropped: {', '.join(dropped)}")
+        diff = {
+            name
+            for name in cur_names & saved_names
+            if cur_cookies[name] != service.saved_cookies[name]
+        }
+        if diff:
+            msg.append(f"updated: {', '.join(diff)}")
+        if new := cur_names - saved_names:
+            msg.append(f"new: {', '.join(new)}")
+        _LOGGER.debug("%s: Saving cookies, changes: %s", entry.title, ", ".join(msg))
+        cookies_last_saved = dt_util.now()
+        hass.async_add_executor_job(service.save_cookies)
+
     async def update_method() -> GMData:
         """Get shared location data."""
         nonlocal service, get_people_func, cookies_last_saved
@@ -480,9 +529,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     get_people_func = cast(PeopleFunc, service.get_shared_people)
                 cookies_last_saved = dt_util.now()
             await hass.async_add_executor_job(service.get_resp_and_parse)
-            if (now := dt_util.now()) - cookies_last_saved > timedelta(minutes=15):
-                cookies_last_saved = now
-                hass.async_add_executor_job(service.save_cookies)
+            save_cookies_if_changed()
             people = get_people_func()
         except (InvalidCookieFile, InvalidCookies) as err:
             raise ConfigEntryAuthFailed(f"{err.__class__.__name__}: {err}") from err
@@ -536,18 +583,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
             )
 
-    @callback
-    def save_cookies_at_stop(_: Event) -> None:
-        """Save session's cookies at Home Asistant stop."""
-        if not service:
-            return
-        _LOGGER.debug("%s: Saving cookies", entry.title)
-        hass.async_add_executor_job(service.save_cookies)
-
     entry.async_on_unload(entry.add_update_listener(entry_updated))
     entry.async_on_unload(
         hass.bus.async_listen_once(
-            EVENT_HOMEASSISTANT_FINAL_WRITE, save_cookies_at_stop
+            EVENT_HOMEASSISTANT_FINAL_WRITE, save_cookies_if_changed
         )
     )
     await hass.config_entries.async_forward_entry_setups(entry, _PLATFORMS)
