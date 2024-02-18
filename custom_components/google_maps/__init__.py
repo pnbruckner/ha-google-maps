@@ -19,6 +19,9 @@ from locationsharinglib.locationsharinglibexceptions import (
     InvalidData,
 )
 from requests import RequestException, Response, Session
+from requests.adapters import HTTPAdapter
+from urllib3 import Retry
+from urllib3.exceptions import MaxRetryError
 
 from homeassistant.components.device_tracker import DOMAIN as DT_DOMAIN
 from homeassistant.config_entries import ConfigEntry
@@ -58,6 +61,9 @@ from .const import (
     CREDENTIALS_FILE,
     DOMAIN,
     NAME_PREFIX,
+    RETRIES_BACKOFF,
+    RETRIES_STATUSES,
+    RETRIES_TOTAL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -396,7 +402,15 @@ class GMService(Service):  # type: ignore[misc]
 
     def _get_authenticated_session(self, cookies_file: str | PathLike) -> Session:
         """Get authenticated session."""
+        adapter = HTTPAdapter(
+            max_retries=Retry(
+                total=RETRIES_TOTAL,
+                status_forcelist=RETRIES_STATUSES,
+                backoff_factor=RETRIES_BACKOFF,
+            )
+        )
         self._session = Session()
+        self._session.mount("https://", adapter)
         self.cookies = MozillaCookieJar(cookies_file)
         try:
             self.cookies.load()
@@ -565,7 +579,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             people = get_people_func()
         except (InvalidCookieFile, InvalidCookies) as err:
             raise ConfigEntryAuthFailed(f"{err.__class__.__name__}: {err}") from err
-        except (RequestException, InvalidData) as err:
+        except (MaxRetryError, RequestException, InvalidData) as err:
             raise UpdateFailed(f"{err.__class__.__name__}: {err}") from err
         return {
             UniqueID(cast(str, person.id)): PersonData.from_person(person)
