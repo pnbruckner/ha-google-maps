@@ -5,6 +5,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict as dc_asdict, dataclass, field
 from datetime import datetime, timedelta
 from functools import partial
+from http.cookiejar import LoadError, MozillaCookieJar
 import logging
 from os import PathLike
 from pathlib import Path
@@ -18,6 +19,9 @@ from locationsharinglib.locationsharinglibexceptions import (
     InvalidData,
 )
 from requests import RequestException, Response, Session
+from requests.adapters import HTTPAdapter
+from urllib3 import Retry
+from urllib3.exceptions import MaxRetryError
 
 from homeassistant.components.device_tracker import DOMAIN as DT_DOMAIN
 from homeassistant.config_entries import ConfigEntry
@@ -30,9 +34,10 @@ from homeassistant.const import (
     ATTR_LONGITUDE,
     CONF_SCAN_INTERVAL,
     CONF_USERNAME,
+    EVENT_HOMEASSISTANT_FINAL_WRITE,
     Platform,
 )
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.event import async_track_point_in_time
@@ -56,6 +61,9 @@ from .const import (
     CREDENTIALS_FILE,
     DOMAIN,
     NAME_PREFIX,
+    RETRIES_BACKOFF,
+    RETRIES_STATUSES,
+    RETRIES_TOTAL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -352,12 +360,26 @@ class GMService(Service):  # type: ignore[misc]
     """Service class with better error detection, handling & reporting."""
 
     _data: list[str]
+    saved_cookies: dict[str, tuple[int | None, str | None]]
 
     def __init__(  # pylint: disable=useless-parent-delegation
         self, cookies_file: str | PathLike, authenticating_account: str
     ) -> None:
         """Initialize service."""
-        super().__init__(cookies_file, authenticating_account)
+        try:
+            super().__init__(cookies_file, authenticating_account)
+        finally:
+            self._dump_cookies()
+
+    @property
+    def cookies(self) -> MozillaCookieJar:
+        """Return session's cookies."""
+        return cast(MozillaCookieJar, self._session.cookies)
+
+    @cookies.setter
+    def cookies(self, cookies: MozillaCookieJar) -> None:
+        """Set session's cookies."""
+        self._session.cookies = cookies  # type: ignore[assignment]
 
     @staticmethod
     def _get_server_response(session: Session) -> Response:
@@ -378,17 +400,44 @@ class GMService(Service):  # type: ignore[misc]
             raise
         return resp
 
+    def _get_authenticated_session(self, cookies_file: str | PathLike) -> Session:
+        """Get authenticated session."""
+        adapter = HTTPAdapter(
+            max_retries=Retry(
+                total=RETRIES_TOTAL,
+                status_forcelist=RETRIES_STATUSES,
+                backoff_factor=RETRIES_BACKOFF,
+            )
+        )
+        self._session = Session()
+        self._session.mount("https://", adapter)
+        self.cookies = MozillaCookieJar(cookies_file)
+        try:
+            self.cookies.load()
+        except (FileNotFoundError, LoadError) as err:
+            raise InvalidCookieFile(str(err)) from None
+        if not {cookie.name for cookie in self.cookies} & VALID_COOKIE_NAMES:
+            raise InvalidCookies(f"Missing either of {VALID_COOKIE_NAMES} cookies!")
+        self._update_saved_cookies(self.cookies)
+        return self._session
+
     def get_resp_and_parse(self) -> None:
         """Get server response, parse and check for invalid session."""
-        self._data = cast(
-            list[str],
-            self._parse_location_data(self._get_server_response(self._session).text),
-        )
         try:
-            if self._data[6] == "GgA=":
-                raise InvalidCookies("Invalid session indicated")
-        except IndexError:
-            raise InvalidData(f"Unexpected data: {self._data}") from None
+            self._data = cast(
+                list[str],
+                self._parse_location_data(
+                    self._get_server_response(self._session).text
+                ),
+            )
+            try:
+                if self._data[6] == "GgA=":
+                    raise InvalidCookies("Invalid session indicated")
+            except IndexError:
+                raise InvalidData(f"Unexpected data: {self._data}") from None
+        except InvalidCookies:
+            self._dump_cookies()
+            raise
 
     def _get_data(self) -> list[str]:
         """Get last received & parsed data."""
@@ -401,18 +450,35 @@ class GMService(Service):  # type: ignore[misc]
             people.append(auth_person)
         return people
 
-    # def substitute_cookies(self, cookies_file_contents: str) -> None:
-    #     """Create new session with different cookies that are NOT validated."""
-    #     cookie_entries = [line.strip() for line in cookies_file_contents.splitlines()
-    #                         if not line.strip().startswith('#') and line]
-    #     cookies = []
-    #     for entry in cookie_entries:
-    #         domain, flag, path, secure, expiry, name, value, *rest = entry.split()
-    #         cookies.append(Cookie(domain, flag, path, secure, expiry, name, value, rest)) # type: ignore
-    #     session = Session()
-    #     for cookie in cookies:
-    #         session.cookies.set(**cookie.to_dict())
-    #     self._session = session
+    def _update_saved_cookies(self, cookies: MozillaCookieJar) -> None:
+        """Get data for saved cookies."""
+        self.saved_cookies = {
+            cookie.name: (cookie.expires, cookie.value) for cookie in cookies
+        }
+
+    def save_cookies(self) -> None:
+        """Save session's cookies."""
+        self.cookies.save(ignore_discard=True)
+        self._update_saved_cookies(self.cookies)
+
+    def _dump_cookies(self) -> None:
+        """Dump cookies & expiration dates to log."""
+        data: list[tuple[str, datetime | None]] = []
+        for cookie in self.cookies:
+            if cookie.expires:
+                expiration = dt_util.as_local(
+                    dt_util.utc_from_timestamp(cookie.expires)
+                )
+            else:
+                expiration = None
+            data.append((cookie.name, expiration))
+        data.sort(key=lambda d: d[0])
+        data.sort(key=lambda d: datetime.min if d[1] is None else d[1])
+        _LOGGER.debug(
+            "%s: cookies: %s",
+            self.email,
+            ", ".join([f"{name}: {exp}" for name, exp in data]),
+        )
 
 
 async def entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -456,10 +522,46 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     service: GMService | None = None
     get_people_func: PeopleFunc
+    cookies_last_saved: datetime
+
+    @callback
+    def save_cookies_if_changed(event: Event | None = None) -> None:
+        """Save session's cookies."""
+        nonlocal cookies_last_saved
+
+        if not service:
+            return
+        cur_cookies = {
+            cookie.name: (cookie.expires, cookie.value) for cookie in service.cookies
+        }
+        if (
+            cur_cookies == service.saved_cookies
+            or event is None
+            and dt_util.now() - cookies_last_saved < timedelta(minutes=15)
+        ):
+            return
+
+        msg: list[str] = []
+        cur_names = set(cur_cookies)
+        saved_names = set(service.saved_cookies)
+        if dropped := saved_names - cur_names:
+            msg.append(f"dropped: {', '.join(dropped)}")
+        diff = {
+            name
+            for name in cur_names & saved_names
+            if cur_cookies[name] != service.saved_cookies[name]
+        }
+        if diff:
+            msg.append(f"updated: {', '.join(diff)}")
+        if new := cur_names - saved_names:
+            msg.append(f"new: {', '.join(new)}")
+        _LOGGER.debug("%s: Saving cookies, changes: %s", entry.title, ", ".join(msg))
+        cookies_last_saved = dt_util.now()
+        hass.async_add_executor_job(service.save_cookies)
 
     async def update_method() -> GMData:
         """Get shared location data."""
-        nonlocal service, get_people_func
+        nonlocal service, get_people_func, cookies_last_saved
 
         try:
             if not service:
@@ -471,11 +573,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     get_people_func = service.get_all_people
                 else:
                     get_people_func = cast(PeopleFunc, service.get_shared_people)
+                cookies_last_saved = dt_util.now()
             await hass.async_add_executor_job(service.get_resp_and_parse)
+            save_cookies_if_changed()
             people = get_people_func()
         except (InvalidCookieFile, InvalidCookies) as err:
             raise ConfigEntryAuthFailed(f"{err.__class__.__name__}: {err}") from err
-        except (RequestException, InvalidData) as err:
+        except (MaxRetryError, RequestException, InvalidData) as err:
             raise UpdateFailed(f"{err.__class__.__name__}: {err}") from err
         return {
             UniqueID(cast(str, person.id)): PersonData.from_person(person)
@@ -526,6 +630,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
 
     entry.async_on_unload(entry.add_update_listener(entry_updated))
+    entry.async_on_unload(
+        hass.bus.async_listen_once(
+            EVENT_HOMEASSISTANT_FINAL_WRITE, save_cookies_if_changed
+        )
+    )
     await hass.config_entries.async_forward_entry_setups(entry, _PLATFORMS)
     return True
 
@@ -534,6 +643,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, _PLATFORMS)
     if unload_ok:
+        # TODO: Save cookies & close session???
         gmi_data = cast(GMIntegData, hass.data[DOMAIN])
         del gmi_data.coordinators[cast(ConfigID, entry.entry_id)]
     return unload_ok
