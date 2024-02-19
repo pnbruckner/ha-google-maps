@@ -28,6 +28,10 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv, entity_registry as er
+from homeassistant.helpers.device_registry import (
+    STORAGE_VERSION_MAJOR,
+    STORAGE_VERSION_MINOR,
+)
 
 # DeviceInfo moved in 2023.9.0b0
 try:
@@ -275,11 +279,13 @@ class GoogleMapsDeviceTracker(
     @property
     def device_info(self) -> DeviceInfo | None:
         """Return device specific attributes."""
-        return DeviceInfo(
+        info = DeviceInfo(
             identifiers={(DOMAIN, cast(str, self.unique_id))},
             name=self._full_name,
-            serial_number=self.unique_id,
         )
+        if (STORAGE_VERSION_MAJOR, STORAGE_VERSION_MINOR) >= (1, 4):
+            info["serial_number"] = self.unique_id
+        return info
 
     @property
     def entity_picture(self) -> str | None:
