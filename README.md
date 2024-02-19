@@ -38,6 +38,7 @@ but managing those cookies is made a bit easier, including:
 - Automatically finding and using an existing cookies file used by the legacy implementation.
 - Detailed instructions for obtaining a new cookies file.
 - Providing a simplified process to upload a new cookies file.
+- Updating cookies file with new cookies sent by Google server.
 - Displaying the expiration date [^1].
 - The creation of a repair issue when they will expire in the near future.
 - Automatically initiating reconfiguration when they do expire.
