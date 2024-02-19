@@ -55,6 +55,7 @@ from .const import (
     ATTR_ADDRESS,
     ATTR_LAST_SEEN,
     ATTR_NICKNAME,
+    AUTH_ERRORS,
     CONF_COOKIES_FILE,
     CONF_CREATE_ACCT_ENTITY,
     COOKIE_WARNING_PERIOD,
@@ -69,11 +70,6 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 _PLATFORMS = [Platform.DEVICE_TRACKER]
 
-_UNAUTHORIZED = 401
-_FORBIDDEN = 403
-_TOO_MANY_REQUESTS = 429
-_AUTH_ERRORS = (_UNAUTHORIZED, _FORBIDDEN)
-
 
 def old_cookies_file_path(hass: HomeAssistant, username: str) -> Path:
     """Return path to cookies file from legacy implementation."""
@@ -85,20 +81,33 @@ def cookies_file_path(hass: HomeAssistant, cookies_file: str) -> Path:
     return Path(hass.config.path()) / STORAGE_DIR / DOMAIN / cookies_file
 
 
-def get_expiration(cookies: str) -> datetime | None:
+def get_cookies(cookies_file: str | PathLike) -> MozillaCookieJar:
+    """Get cookies from cookies file."""
+    cookies = MozillaCookieJar(cookies_file)
+    try:
+        cookies.load()
+    except (FileNotFoundError, LoadError) as err:
+        raise InvalidCookieFile(str(err)) from None
+    return cookies
+
+
+def get_expiration(cookies_file: str | PathLike) -> datetime | None:
     """Return expiration of cookies."""
-    return min(
+    try:
+        cookies = get_cookies(cookies_file)
+    except InvalidCookieFile:
+        return None
+    expiration = min(
         [
-            dt_util.as_local(dt_util.utc_from_timestamp(int(cookie_data[4])))
-            for cookie_data in [
-                line.strip().split()
-                for line in cookies.splitlines()
-                if line.strip() and not line.strip().startswith("#")
-            ]
-            if cookie_data[5] in VALID_COOKIE_NAMES
+            cookie.expires
+            for cookie in cookies
+            if cookie.name in VALID_COOKIE_NAMES and cookie.expires is not None
         ],
         default=None,
     )
+    if not expiration:
+        return None
+    return dt_util.as_local(dt_util.utc_from_timestamp(expiration))
 
 
 def exp_2_str(expiration: datetime | None) -> str:
@@ -389,7 +398,7 @@ class GMService(Service):  # type: ignore[misc]
             resp = cast(Response, Service._get_server_response(session))
             resp.raise_for_status()
         except RequestException as err:
-            if resp and resp.status_code in _AUTH_ERRORS:
+            if resp and resp.status_code in AUTH_ERRORS:
                 _LOGGER.debug(
                     "Error: %s: %i %s; reauthorize",
                     err.__class__.__name__,
@@ -411,11 +420,7 @@ class GMService(Service):  # type: ignore[misc]
         )
         self._session = Session()
         self._session.mount("https://", adapter)
-        self.cookies = MozillaCookieJar(cookies_file)
-        try:
-            self.cookies.load()
-        except (FileNotFoundError, LoadError) as err:
-            raise InvalidCookieFile(str(err)) from None
+        self.cookies = get_cookies(cookies_file)
         if not {cookie.name for cookie in self.cookies} & VALID_COOKIE_NAMES:
             raise InvalidCookies(f"Missing either of {VALID_COOKIE_NAMES} cookies!")
         self._update_saved_cookies(self.cookies)
@@ -475,7 +480,7 @@ class GMService(Service):  # type: ignore[misc]
         data.sort(key=lambda d: d[0])
         data.sort(key=lambda d: datetime.min if d[1] is None else d[1])
         _LOGGER.debug(
-            "%s: cookies: %s",
+            "%s: Cookies: %s",
             self.email,
             ", ".join([f"{name}: {exp}" for name, exp in data]),
         )
