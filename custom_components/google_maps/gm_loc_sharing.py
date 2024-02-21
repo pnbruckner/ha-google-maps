@@ -1,17 +1,19 @@
 """Google Maps Location Sharing."""
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from functools import cached_property
-from http.cookiejar import LoadError, MozillaCookieJar
+from http.cookiejar import MozillaCookieJar
 import json
 import logging
 from typing import Any, Self, cast
 
-from requests import Session
+from requests import RequestException, Session
 from requests.adapters import HTTPAdapter
 from urllib3 import Retry
+from urllib3.exceptions import MaxRetryError
 
 _LOGGER = logging.getLogger(__name__)
 _PROTOCOL = "https://"
@@ -69,6 +71,10 @@ class InvalidData(GMError):
     """Invalid data from server."""
 
 
+class RequestFailed(GMError):
+    """Server request failed."""
+
+
 @dataclass
 class GMPerson:
     """Person's location data."""
@@ -92,12 +98,11 @@ class GMPerson:
     def __post_init__(self) -> None:
         """Post initialization."""
         self.last_seen = datetime.fromtimestamp(
-            int(self.last_seen) / 1000,  # type: ignore[call-overload]
-            tz=UTC,
-        )
+            int(self.last_seen) / 1000  # type: ignore[call-overload]
+        ).astimezone()
 
     @classmethod
-    def _shared_from_data(cls, data: list[Any]) -> Self:
+    def shared_from_data(cls, data: Sequence[Any]) -> Self | None:
         """Initialize shared person from server data."""
         try:
             battery_charging = bool(data[13][0])
@@ -107,55 +112,44 @@ class GMPerson:
             battery_level = data[13][1]
         except (IndexError, TypeError):
             battery_level = None
-        return cls(
-            data[6][0],
-            data[1][4],
-            data[1][6],
-            data[1][3],
-            data[1][2],
-            data[1][1][2],
-            data[1][1][1],
-            battery_charging,
-            battery_level,
-            data[6][2],
-            data[6][3],
-            data[6][1],
-        )
+        try:
+            return cls(
+                data[6][0],
+                data[1][4],
+                data[1][6],
+                data[1][3],
+                data[1][2],
+                data[1][1][2],
+                data[1][1][1],
+                battery_charging,
+                battery_level,
+                data[6][2],
+                data[6][3],
+                data[6][1],
+            )
+        except (IndexError, TypeError):
+            return None
 
     @classmethod
-    def _acct_from_data(cls, data: list[Any], account_email: str) -> Self | None:
+    def acct_from_data(cls, data: Sequence[Any], account_email: str) -> Self | None:
         """Initialize shared person from server data."""
         try:
             return cls(
                 account_email,
-                data[9][1][4],
-                data[9][1][6],
-                data[9][1][3],
-                data[9][1][2],
-                data[9][1][1][2],
-                data[9][1][1][1],
+                data[1][4],
+                data[1][6],
+                data[1][3],
+                data[1][2],
+                data[1][1][2],
+                data[1][1][1],
                 None,
                 None,
                 account_email,
                 account_email,
                 None,
             )
-        except IndexError:
-            _LOGGER.debug(
-                "Information not available for holder of account: %s", account_email
-            )
+        except (IndexError, TypeError):
             return None
-
-    @classmethod
-    def people_from_data(cls, data: list[Any], account_email: str | None) -> list[Self]:
-        """Return list of location data for people from server data."""
-        people: list[Self] = [
-            cls._shared_from_data(person_data) for person_data in data[0] or []
-        ]
-        if account_email is not None:
-            if acct_person := cls._acct_from_data(data, account_email):
-                people.append(acct_person)
-        return people
 
 
 CookieData = dict[str, tuple[int | None, str | None]]
@@ -163,9 +157,6 @@ CookieData = dict[str, tuple[int | None, str | None]]
 
 class GMLocSharing:
     """Google Maps location sharing."""
-
-    _cookies_file_data: CookieData
-    _data: list[Any]
 
     def __init__(self, account_email: str) -> None:
         """Initialize API."""
@@ -182,6 +173,8 @@ class GMLocSharing:
             ),
         )
         self._session.cookies = MozillaCookieJar()  # type: ignore[assignment]
+        self._cookies_file_data: CookieData = {}
+        self._data: Sequence[Any] = []
 
     @cached_property
     def _cookies(self) -> MozillaCookieJar:
@@ -208,7 +201,7 @@ class GMLocSharing:
                 expirations.append(expiration)
         if not expirations:
             return None
-        return datetime.fromtimestamp(min(expirations), tz=UTC)
+        return datetime.fromtimestamp(min(expirations)).astimezone()
 
     def close(self) -> None:
         """Close API."""
@@ -219,19 +212,67 @@ class GMLocSharing:
         self._cookies.clear()
         try:
             self._cookies.load(cookies_file)
-        except (FileNotFoundError, LoadError) as err:
-            raise InvalidCookiesFile(str(err)) from None
+        except OSError as err:
+            raise InvalidCookiesFile(f"{err.__class__.__name__}: {err}") from None
+        self._dump_cookies()
         if not {cookie.name for cookie in self._cookies} & _VALID_COOKIE_NAMES:
             raise InvalidCookies(f"Missing either of {_VALID_COOKIE_NAMES} cookies")
         self._cookies_file_data = self._cookie_data
 
     def save_cookies(self, cookies_file: str) -> None:
         """Save cookies to file."""
+        self._dump_changed_cookies()
         self._cookies.save(cookies_file)
         self._cookies_file_data = self._cookie_data
 
-    def dump_cookies(self) -> None:
+    def get_new_data(self) -> None:
+        """Get new data from Google server."""
+        try:
+            resp = self._session.get(_URL, params=_PARAMS, verify=True)
+            resp.raise_for_status()
+        except (RequestException, MaxRetryError) as err:
+            raise RequestFailed(f"{err.__class__.__name__}: {err}") from err
+        raw_data = resp.text
+        try:
+            self._data = json.loads(raw_data[5:])
+        except (IndexError, json.JSONDecodeError) as err:
+            raise InvalidData(f"Could not parse: {raw_data}") from err
+        if not isinstance(self._data, Sequence):
+            raise InvalidData(f"Expected a Sequence, got: {self._data}")
+        try:
+            if self._data[6] == "GgA=":
+                self._dump_cookies()
+                raise InvalidCookies("Invalid session indicated")
+        except IndexError:
+            raise InvalidData(f"Unexpected parsed data: {self._data}") from None
+
+    def get_people(self, include_acct_person: bool) -> list[GMPerson]:
+        """Get people from data."""
+        people: list[GMPerson] = []
+        bad_data: list[list[Any]] = []
+        if len(self._data) < 1:
+            raise InvalidData("No shared location data")
+        for person_data in self._data[0] or []:
+            if person := GMPerson.shared_from_data(person_data):
+                people.append(person)
+            else:
+                bad_data.append(person_data)
+        if include_acct_person and len(self._data) >= 10:
+            if person := GMPerson.acct_from_data(self._data[9], self._account_email):
+                people.append(person)
+            else:
+                bad_data.append(self._data[9])
+        if bad_data:
+            raise InvalidData(
+                "Invalid data for one or more people: "
+                + "; ".join(f"<{d}>" for d in bad_data)
+            )
+        return people
+
+    def _dump_cookies(self) -> None:
         """Dump cookies & expiration dates to log."""
+        if not _LOGGER.isEnabledFor(logging.DEBUG):
+            return
         data: list[tuple[str, datetime | None]] = []
         for cookie in self._cookies:
             if cookie.expires:
@@ -247,23 +288,27 @@ class GMLocSharing:
             ", ".join([f"{name}: {exp}" for name, exp in data]),
         )
 
-    def get_new_data(self) -> None:
-        """Get new data from Google server."""
-        resp = self._session.get(_URL, params=_PARAMS, verify=True)
-        resp.raise_for_status()
-        raw_data = resp.text
-        try:
-            self._data = json.loads(raw_data[5:])
-        except (IndexError, json.JSONDecodeError) as err:
-            raise InvalidData(f"Could not parse: {raw_data}") from err
-        try:
-            if self._data[6] == "GgA=":
-                raise InvalidCookies("Invalid session indicated")
-        except IndexError:
-            raise InvalidData(f"Unexpected parsed data: {self._data}") from None
-
-    def get_people(self, include_acct_person: bool) -> list[GMPerson]:
-        """Get people from data."""
-        return GMPerson.people_from_data(
-            self._data, self._account_email if include_acct_person else None
+    def _dump_changed_cookies(self) -> None:
+        """Dump cookie changes since last saved to log."""
+        if not _LOGGER.isEnabledFor(logging.DEBUG):
+            return
+        msg: list[str] = []
+        cookie_data = self._cookie_data
+        cur_names = set(cookie_data)
+        saved_names = set(self._cookies_file_data)
+        if dropped := saved_names - cur_names:
+            msg.append(f"dropped: {', '.join(dropped)}")
+        diff = {
+            name
+            for name in cur_names & saved_names
+            if cookie_data[name] != self._cookies_file_data[name]
+        }
+        if diff:
+            msg.append(f"updated: {', '.join(diff)}")
+        if new := cur_names - saved_names:
+            msg.append(f"new: {', '.join(new)}")
+        _LOGGER.debug(
+            "%s: Changed cookies since last saved: %s",
+            self._account_email,
+            ", ".join(msg),
         )

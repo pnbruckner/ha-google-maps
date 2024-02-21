@@ -1,27 +1,14 @@
 """The google_maps component."""
 from __future__ import annotations
 
+from asyncio import Lock
 from collections.abc import Callable, Mapping
 from dataclasses import asdict as dc_asdict, dataclass, field
 from datetime import datetime, timedelta
 from functools import partial
-from http.cookiejar import LoadError, MozillaCookieJar
 import logging
-from os import PathLike
 from pathlib import Path
 from typing import Any, NewType, Self, cast
-
-from locationsharinglib import Person, Service
-from locationsharinglib.locationsharinglib import VALID_COOKIE_NAMES
-from locationsharinglib.locationsharinglibexceptions import (
-    InvalidCookieFile,
-    InvalidCookies,
-    InvalidData,
-)
-from requests import RequestException, Response, Session
-from requests.adapters import HTTPAdapter
-from urllib3 import Retry
-from urllib3.exceptions import MaxRetryError
 
 from homeassistant.components.device_tracker import DOMAIN as DT_DOMAIN
 from homeassistant.config_entries import ConfigEntry
@@ -55,16 +42,20 @@ from .const import (
     ATTR_ADDRESS,
     ATTR_LAST_SEEN,
     ATTR_NICKNAME,
-    AUTH_ERRORS,
     CONF_COOKIES_FILE,
     CONF_CREATE_ACCT_ENTITY,
     COOKIE_WARNING_PERIOD,
     CREDENTIALS_FILE,
     DOMAIN,
     NAME_PREFIX,
-    RETRIES_BACKOFF,
-    RETRIES_STATUSES,
-    RETRIES_TOTAL,
+)
+from .gm_loc_sharing import (
+    GMLocSharing,
+    GMPerson,
+    InvalidCookies,
+    InvalidCookiesFile,
+    InvalidData,
+    RequestFailed,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -79,35 +70,6 @@ def old_cookies_file_path(hass: HomeAssistant, username: str) -> Path:
 def cookies_file_path(hass: HomeAssistant, cookies_file: str) -> Path:
     """Return path to cookies file."""
     return Path(hass.config.path()) / STORAGE_DIR / DOMAIN / cookies_file
-
-
-def get_cookies(cookies_file: str | PathLike) -> MozillaCookieJar:
-    """Get cookies from cookies file."""
-    cookies = MozillaCookieJar(cookies_file)
-    try:
-        cookies.load()
-    except (FileNotFoundError, LoadError) as err:
-        raise InvalidCookieFile(str(err)) from None
-    return cookies
-
-
-def get_expiration(cookies_file: str | PathLike) -> datetime | None:
-    """Return expiration of cookies."""
-    try:
-        cookies = get_cookies(cookies_file)
-    except InvalidCookieFile:
-        return None
-    expiration = min(
-        [
-            cookie.expires
-            for cookie in cookies
-            if cookie.name in VALID_COOKIE_NAMES and cookie.expires is not None
-        ],
-        default=None,
-    )
-    if not expiration:
-        return None
-    return dt_util.as_local(dt_util.utc_from_timestamp(expiration))
 
 
 def exp_2_str(expiration: datetime | None) -> str:
@@ -172,14 +134,14 @@ class LocationData:
             return None
 
     @classmethod
-    def from_person(cls, person: Person) -> Self:
-        """Initialize location data from Person object."""
+    def from_person(cls, person: GMPerson) -> Self:
+        """Initialize location data from GMPerson object."""
         return cls(
-            cast(str, person.address),
-            cast(int, person.accuracy),
-            person.datetime,
-            cast(float, person.latitude),
-            cast(float, person.longitude),
+            person.address,
+            person.gps_accuracy,
+            person.last_seen,
+            person.latitude,
+            person.longitude,
         )
 
     @classmethod
@@ -202,9 +164,9 @@ class LocationData:
 class MiscData:
     """Miscellaneous data."""
 
-    battery_charging: bool
+    battery_charging: bool | None
     battery_level: int | None
-    entity_picture: str
+    entity_picture: str | None
     full_name: str
     nickname: str
 
@@ -227,14 +189,14 @@ class MiscData:
             return None
 
     @classmethod
-    def from_person(cls, person: Person) -> Self:
-        """Initialize miscellaneous data from Person object."""
+    def from_person(cls, person: GMPerson) -> Self:
+        """Initialize miscellaneous data from GMPerson object."""
         return cls(
-            person.charging,
-            cast(int | None, person.battery_level),
-            cast(str, person.picture_url),
-            cast(str, person.full_name),
-            cast(str, person.nickname),
+            person.battery_charging,
+            person.battery_level,
+            person.picture_url,
+            person.full_name,
+            person.nickname,
         )
 
     @classmethod
@@ -242,9 +204,9 @@ class MiscData:
         """Initialize miscellaneous data from state attributes."""
         try:
             return cls(
-                attrs[ATTR_BATTERY_CHARGING],
+                attrs.get(ATTR_BATTERY_CHARGING),
                 attrs.get(ATTR_BATTERY_LEVEL),
-                attrs[ATTR_ENTITY_PICTURE],
+                attrs.get(ATTR_ENTITY_PICTURE),
                 full_name,
                 attrs[ATTR_NICKNAME],
             )
@@ -273,8 +235,8 @@ class PersonData(ExtraStoredData):
         return cls(loc, misc)
 
     @classmethod
-    def from_person(cls, person: Person) -> Self:
-        """Initialize shared person data from Person object."""
+    def from_person(cls, person: GMPerson) -> Self:
+        """Initialize shared person data from GMPerson object."""
         return cls(
             LocationData.from_person(person),
             MiscData.from_person(person),
@@ -362,128 +324,8 @@ class GMIntegData:
     """Google Maps integration data."""
 
     unique_ids: ConfigUniqueIDs
+    cookie_locks: dict[ConfigID, Lock] = field(default_factory=dict)
     coordinators: dict[ConfigID, GMDataUpdateCoordinator] = field(default_factory=dict)
-
-
-class GMService(Service):  # type: ignore[misc]
-    """Service class with better error detection, handling & reporting."""
-
-    _data: list[str]
-    saved_cookies: dict[str, tuple[int | None, str | None]]
-
-    def __init__(  # pylint: disable=useless-parent-delegation
-        self, cookies_file: str | PathLike, authenticating_account: str
-    ) -> None:
-        """Initialize service."""
-        try:
-            super().__init__(cookies_file, authenticating_account)
-        finally:
-            self._dump_cookies()
-
-    @property
-    def cookies(self) -> MozillaCookieJar:
-        """Return session's cookies."""
-        return cast(MozillaCookieJar, self._session.cookies)
-
-    @cookies.setter
-    def cookies(self, cookies: MozillaCookieJar) -> None:
-        """Set session's cookies."""
-        self._session.cookies = cookies  # type: ignore[assignment]
-
-    @staticmethod
-    def _get_server_response(session: Session) -> Response:
-        """Get response from server using session and check for unauthorized error."""
-        resp = None
-        try:
-            resp = cast(Response, Service._get_server_response(session))
-            resp.raise_for_status()
-        except RequestException as err:
-            if resp and resp.status_code in AUTH_ERRORS:
-                _LOGGER.debug(
-                    "Error: %s: %i %s; reauthorize",
-                    err.__class__.__name__,
-                    resp.status_code,
-                    resp.reason,
-                )
-                raise InvalidCookies(f"{err.__class__.__name__}: {err}") from err
-            raise
-        return resp
-
-    def _get_authenticated_session(self, cookies_file: str | PathLike) -> Session:
-        """Get authenticated session."""
-        adapter = HTTPAdapter(
-            max_retries=Retry(
-                total=RETRIES_TOTAL,
-                status_forcelist=RETRIES_STATUSES,
-                backoff_factor=RETRIES_BACKOFF,
-            )
-        )
-        self._session = Session()
-        self._session.mount("https://", adapter)
-        self.cookies = get_cookies(cookies_file)
-        if not {cookie.name for cookie in self.cookies} & VALID_COOKIE_NAMES:
-            raise InvalidCookies(f"Missing either of {VALID_COOKIE_NAMES} cookies!")
-        self._update_saved_cookies(self.cookies)
-        return self._session
-
-    def get_resp_and_parse(self) -> None:
-        """Get server response, parse and check for invalid session."""
-        try:
-            self._data = cast(
-                list[str],
-                self._parse_location_data(
-                    self._get_server_response(self._session).text
-                ),
-            )
-            try:
-                if self._data[6] == "GgA=":
-                    raise InvalidCookies("Invalid session indicated")
-            except IndexError:
-                raise InvalidData(f"Unexpected data: {self._data}") from None
-        except InvalidCookies:
-            self._dump_cookies()
-            raise
-
-    def _get_data(self) -> list[str]:
-        """Get last received & parsed data."""
-        return self._data
-
-    def get_all_people(self) -> list[Person]:
-        """Retrieve all people sharing their location."""
-        people = cast(list[Person], self.get_shared_people())
-        if auth_person := self.get_authenticated_person():
-            people.append(auth_person)
-        return people
-
-    def _update_saved_cookies(self, cookies: MozillaCookieJar) -> None:
-        """Get data for saved cookies."""
-        self.saved_cookies = {
-            cookie.name: (cookie.expires, cookie.value) for cookie in cookies
-        }
-
-    def save_cookies(self) -> None:
-        """Save session's cookies."""
-        self.cookies.save(ignore_discard=True)
-        self._update_saved_cookies(self.cookies)
-
-    def _dump_cookies(self) -> None:
-        """Dump cookies & expiration dates to log."""
-        data: list[tuple[str, datetime | None]] = []
-        for cookie in self.cookies:
-            if cookie.expires:
-                expiration = dt_util.as_local(
-                    dt_util.utc_from_timestamp(cookie.expires)
-                )
-            else:
-                expiration = None
-            data.append((cookie.name, expiration))
-        data.sort(key=lambda d: d[0])
-        data.sort(key=lambda d: datetime.min if d[1] is None else d[1])
-        _LOGGER.debug(
-            "%s: Cookies: %s",
-            self.email,
-            ", ".join([f"{name}: {exp}" for name, exp in data]),
-        )
 
 
 async def entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -491,23 +333,103 @@ async def entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-PeopleFunc = Callable[[], list[Person]]
-
-
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up config entry."""
-    if not (gmi_data := cast(GMIntegData | None, hass.data.get(DOMAIN))):
-        hass.data[DOMAIN] = gmi_data = GMIntegData(ConfigUniqueIDs(hass))
-    unique_ids = gmi_data.unique_ids
-
     cid = ConfigID(entry.entry_id)
-    cf_path = cookies_file_path(hass, entry.data[CONF_COOKIES_FILE])
     username = entry.data[CONF_USERNAME]
+    cf_path = cookies_file_path(hass, entry.data[CONF_COOKIES_FILE])
     create_acct_entity = entry.options[CONF_CREATE_ACCT_ENTITY]
     scan_interval = entry.options[CONF_SCAN_INTERVAL]
 
+    if not (gmi_data := cast(GMIntegData | None, hass.data.get(DOMAIN))):
+        hass.data[DOMAIN] = gmi_data = GMIntegData(ConfigUniqueIDs(hass))
+
+    @callback
+    def unpublish_cookie_lock() -> None:
+        """Remove cookie lock from hass.data."""
+        del gmi_data.cookie_locks[cid]
+
+    # "Publish" cookie lock now on the odd chance that the options flow for this config
+    # entry happens to also start while we're loading cookies, etc. below.
+    gmi_data.cookie_locks[cid] = cookie_lock = Lock()
+    entry.async_on_unload(unpublish_cookie_lock)
+
+    @callback
+    def create_issue(_now: datetime | None = None) -> None:
+        """Create repair issue for cookies which are expiring soon."""
+        async_create_issue(
+            hass,
+            DOMAIN,
+            cid,
+            is_fixable=False,
+            is_persistent=False,
+            severity=IssueSeverity.WARNING,
+            translation_key="expiring_soon",
+            translation_placeholders={"entry_id": cid, "username": username},
+        )
+
+    unsub_expiration: Callable[[], None] | None = None
+
+    @callback
+    def remove_expiration_listener() -> None:
+        """Remove expiration listener."""
+        nonlocal unsub_expiration
+
+        if unsub_expiration:
+            unsub_expiration()
+            unsub_expiration = None
+
+    entry.async_on_unload(remove_expiration_listener)
+    cookies_last_saved: datetime
+
+    def cookies_file_synced(final_write: bool = False) -> None:
+        """Cookies file synced with current cookies."""
+        nonlocal cookies_last_saved, unsub_expiration
+
+        cookies_expiration = api.cookies_expiration
+        cookies_last_saved = dt_util.now()
+        if expiring_soon(cookies_expiration):
+            create_issue()
+        else:
+            async_delete_issue(hass, DOMAIN, cid)
+            if cookies_expiration and not final_write:
+                remove_expiration_listener()
+                unsub_expiration = async_track_point_in_time(
+                    hass, create_issue, cookies_expiration - COOKIE_WARNING_PERIOD
+                )
+
+    api = GMLocSharing(username)
+    async with cookie_lock:
+        try:
+            await hass.async_add_executor_job(api.load_cookies, str(cf_path))
+        except (InvalidCookiesFile, InvalidCookies) as err:
+            raise ConfigEntryAuthFailed(f"{err.__class__.__name__}: {err}") from err
+        cookies_file_synced()
+
+    async def save_cookies_if_changed(event: Event | None = None) -> None:
+        """Save session's cookies if changed."""
+        final_write = bool(event)
+        async with cookie_lock:
+            if not (
+                api.cookies_changed
+                and (
+                    final_write
+                    or dt_util.now() - cookies_last_saved  # noqa: F821
+                    >= timedelta(minutes=15)
+                )
+            ):
+                return
+            try:
+                await hass.async_add_executor_job(api.save_cookies, str(cf_path))
+            except OSError as err:
+                _LOGGER.error(
+                    "Error while saving cookies: %s: %s", err.__class__.__name__, err
+                )
+            cookies_file_synced(final_write)
+
     # For "account person", unique ID is username (which is also returned in person.id.)
     ent_reg = er.async_get(hass)
+    unique_ids = gmi_data.unique_ids
     if create_acct_entity:
         if not unique_ids.own(cid, username) and unique_ids.take(cid, {username}):
             ent_reg.async_get_or_create(
@@ -525,70 +447,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             dev_reg.async_remove_device(device.id)
         unique_ids.release(cid, username)
 
-    service: GMService | None = None
-    get_people_func: PeopleFunc
-    cookies_last_saved: datetime
-
-    @callback
-    def save_cookies_if_changed(event: Event | None = None) -> None:
-        """Save session's cookies."""
-        nonlocal cookies_last_saved
-
-        if not service:
-            return
-        cur_cookies = {
-            cookie.name: (cookie.expires, cookie.value) for cookie in service.cookies
-        }
-        if (
-            cur_cookies == service.saved_cookies
-            or event is None
-            and dt_util.now() - cookies_last_saved < timedelta(minutes=15)
-        ):
-            return
-
-        msg: list[str] = []
-        cur_names = set(cur_cookies)
-        saved_names = set(service.saved_cookies)
-        if dropped := saved_names - cur_names:
-            msg.append(f"dropped: {', '.join(dropped)}")
-        diff = {
-            name
-            for name in cur_names & saved_names
-            if cur_cookies[name] != service.saved_cookies[name]
-        }
-        if diff:
-            msg.append(f"updated: {', '.join(diff)}")
-        if new := cur_names - saved_names:
-            msg.append(f"new: {', '.join(new)}")
-        _LOGGER.debug("%s: Saving cookies, changes: %s", entry.title, ", ".join(msg))
-        cookies_last_saved = dt_util.now()
-        hass.async_add_executor_job(service.save_cookies)
-
     async def update_method() -> GMData:
         """Get shared location data."""
-        nonlocal service, get_people_func, cookies_last_saved
+        async with cookie_lock:
+            try:
+                await hass.async_add_executor_job(api.get_new_data)
+                people = api.get_people(create_acct_entity)
+            except InvalidCookies as err:
+                raise ConfigEntryAuthFailed(f"{err.__class__.__name__}: {err}") from err
+            except (RequestFailed, InvalidData) as err:
+                raise UpdateFailed(f"{err.__class__.__name__}: {err}") from err
 
-        try:
-            if not service:
-                service = cast(
-                    GMService,
-                    await hass.async_add_executor_job(GMService, cf_path, username),
-                )
-                if create_acct_entity:
-                    get_people_func = service.get_all_people
-                else:
-                    get_people_func = cast(PeopleFunc, service.get_shared_people)
-                cookies_last_saved = dt_util.now()
-            await hass.async_add_executor_job(service.get_resp_and_parse)
-            save_cookies_if_changed()
-            people = get_people_func()
-        except (InvalidCookieFile, InvalidCookies) as err:
-            raise ConfigEntryAuthFailed(f"{err.__class__.__name__}: {err}") from err
-        except (MaxRetryError, RequestException, InvalidData) as err:
-            raise UpdateFailed(f"{err.__class__.__name__}: {err}") from err
+        await hass.async_create_task(save_cookies_if_changed())
         return {
-            UniqueID(cast(str, person.id)): PersonData.from_person(person)
-            for person in people
+            UniqueID(person.id): PersonData.from_person(person) for person in people
         }
 
     coordinator = GMDataUpdateCoordinator(
@@ -600,39 +472,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     await coordinator.async_config_entry_first_refresh()
     gmi_data.coordinators[cid] = coordinator
-
-    # Since we got past async_config_entry_first_refresh we know cookies haven't expired
-    # yet. Create a repair issue if/when they will expire "soon."
-    expiration = get_expiration(await hass.async_add_executor_job(cf_path.read_text))
-
-    @callback
-    def create_issue(_now: datetime | None = None) -> None:
-        """Create repair issue for cookies which are expiring soon."""
-        async_create_issue(
-            hass,
-            DOMAIN,
-            entry.entry_id,
-            is_fixable=False,
-            is_persistent=False,
-            severity=IssueSeverity.WARNING,
-            translation_key="expiring_soon",
-            translation_placeholders={
-                "entry_id": entry.entry_id,
-                "expiration": exp_2_str(expiration),
-                "username": username,
-            },
-        )
-
-    if expiring_soon(expiration):
-        create_issue()
-    else:
-        async_delete_issue(hass, DOMAIN, entry.entry_id)
-        if expiration:
-            entry.async_on_unload(
-                async_track_point_in_time(
-                    hass, create_issue, expiration - COOKIE_WARNING_PERIOD
-                )
-            )
 
     entry.async_on_unload(entry.add_update_listener(entry_updated))
     entry.async_on_unload(
@@ -650,16 +489,15 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         # TODO: Save cookies & close session???
         gmi_data = cast(GMIntegData, hass.data[DOMAIN])
-        del gmi_data.coordinators[cast(ConfigID, entry.entry_id)]
+        cid = ConfigID(entry.entry_id)
+        del gmi_data.coordinators[cid]
     return unload_ok
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Remove a config entry."""
     gmi_data = cast(GMIntegData, hass.data[DOMAIN])
-    gmi_data.unique_ids.remove(cast(ConfigID, entry.entry_id))
-    if not gmi_data.coordinators and gmi_data.unique_ids.empty:
-        del hass.data[DOMAIN]
+    gmi_data.unique_ids.remove(ConfigID(entry.entry_id))
     hass.async_add_executor_job(
         partial(
             cookies_file_path(hass, entry.data[CONF_COOKIES_FILE]).unlink,

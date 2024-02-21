@@ -8,7 +8,9 @@ import logging
 from typing import Any, cast
 
 from locationsharinglib import Service
-from locationsharinglib.locationsharinglibexceptions import InvalidCookies
+from locationsharinglib.locationsharinglibexceptions import (
+    InvalidCookies as lsl_InvalidCookies,
+)
 import voluptuous as vol
 
 from homeassistant.components.device_tracker import (
@@ -121,7 +123,7 @@ class GoogleMapsScanner:
 
             self.success_init = True
 
-        except InvalidCookies:
+        except lsl_InvalidCookies:
             _LOGGER.error(
                 "The cookie file provided does not provide a valid session. Please"
                 " create another one and try again"
@@ -268,13 +270,13 @@ class GoogleMapsDeviceTracker(
         """Return entity specific state attributes."""
         if self._misc is None:
             return None
-        attrs: dict[str, Any] = {ATTR_BATTERY_CHARGING: self._misc.battery_charging}
+        attrs: dict[str, Any] = {ATTR_NICKNAME: self._misc.nickname}
+        if (charging := self._misc.battery_charging) is not None:
+            attrs[ATTR_BATTERY_CHARGING] = charging
         if self._loc:
             attrs[ATTR_ADDRESS] = self._loc.address
-        attrs[ATTR_NICKNAME] = self._misc.nickname
-        if self._loc:
             attrs[ATTR_LAST_SEEN] = self._loc.last_seen
-        return attrs
+        return dict(sorted(attrs.items()))
 
     @property
     def device_info(self) -> DeviceInfo | None:
