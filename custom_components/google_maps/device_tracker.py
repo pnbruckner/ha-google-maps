@@ -48,17 +48,6 @@ from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util, slugify
 
-from . import (
-    ConfigID,
-    FromAttributesError,
-    GMDataUpdateCoordinator,
-    GMIntegData,
-    LocationData,
-    MiscData,
-    PersonData,
-    UniqueID,
-    old_cookies_file_path,
-)
 from .const import (
     ATTR_ADDRESS,
     ATTR_FULL_NAME,
@@ -69,6 +58,16 @@ from .const import (
     DEF_SCAN_INTERVAL,
     DOMAIN,
     NAME_PREFIX,
+)
+from .coordinator import GMDataUpdateCoordinator, GMIntegData
+from .helpers import (
+    ConfigID,
+    FromAttributesError,
+    LocationData,
+    MiscData,
+    PersonData,
+    UniqueID,
+    old_cookies_file_path,
 )
 
 _LOGGER = logging.getLogger(__name__)

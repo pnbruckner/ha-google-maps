@@ -37,14 +37,6 @@ from homeassistant.helpers.selector import (
 from homeassistant.loader import async_get_integration
 from homeassistant.util.uuid import random_uuid_hex
 
-from . import (
-    ConfigID,
-    GMIntegData,
-    cookies_file_path,
-    exp_2_str,
-    expiring_soon,
-    old_cookies_file_path,
-)
 from .const import (
     CONF_COOKIES_FILE,
     CONF_CREATE_ACCT_ENTITY,
@@ -53,12 +45,20 @@ from .const import (
     DOMAIN,
 )
 from .cookies import CHROME_PROCEDURE, EDGE_PROCEDURE, FIREFOX_PROCEDURE
+from .coordinator import GMIntegData
 from .gm_loc_sharing import (
     GMLocSharing,
     InvalidCookies,
     InvalidCookiesFile,
     InvalidData,
     RequestFailed,
+)
+from .helpers import (
+    ConfigID,
+    cookies_file_path,
+    exp_2_str,
+    expiring_soon,
+    old_cookies_file_path,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -346,9 +346,6 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    # The following is only used in the reauth flow.
-    _cookies_lock: Lock
-
     def __init__(self) -> None:
         """Initialize config flow."""
         self._options: dict[str, Any] = {}
@@ -392,10 +389,6 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
             self.context["entry_id"]
         )
         assert self._reauth_entry
-        gmi_data = cast(GMIntegData, self.hass.data[DOMAIN])
-        self._cookies_lock = gmi_data.cookie_locks.get(
-            ConfigID(self._reauth_entry.entry_id), Lock()
-        )
         return await self.async_step_cookies()
 
     async def async_step_done(self, _: dict[str, Any] | None = None) -> FlowResult:
@@ -414,14 +407,17 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Finish the reauthorization flow."""
         # Save cookies.
+        # We can't, however, just save the new cookies then reload because the unload
+        # step will overwrite the cookies that we just saved. So, first unload, then
+        # save, then setup.
         assert self._reauth_entry
-        async with self._cookies_lock:
-            await self.hass.async_add_executor_job(
-                self._save_cookies, self._reauth_entry.data[CONF_COOKIES_FILE]
-            )
+        await self.hass.config_entries.async_unload(self._reauth_entry.entry_id)
+        await self.hass.async_add_executor_job(
+            self._save_cookies, self._reauth_entry.data[CONF_COOKIES_FILE]
+        )
         _LOGGER.debug("Reauthorization successful")
         self.hass.async_create_task(
-            self.hass.config_entries.async_reload(self._reauth_entry.entry_id)
+            self.hass.config_entries.async_setup(self._reauth_entry.entry_id)
         )
         return self.async_abort(reason="reauth_successful")
 
@@ -430,7 +426,6 @@ class GoogleMapsOptionsFlow(OptionsFlowWithConfigEntry, GoogleMapsFlow):
     """Google Maps options flow."""
 
     _update_cookies = False
-    _cookies_lock: Lock
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -448,10 +443,8 @@ class GoogleMapsOptionsFlow(OptionsFlowWithConfigEntry, GoogleMapsFlow):
         )
         self._api = GMLocSharing(self._username)
         gmi_data = cast(GMIntegData, self.hass.data[DOMAIN])
-        self._cookies_lock = gmi_data.cookie_locks.get(
-            ConfigID(self.config_entry.entry_id), Lock()
-        )
-        async with self._cookies_lock:
+        coordinator = gmi_data.coordinators.get(ConfigID(self.config_entry.entry_id))
+        async with coordinator.cookie_lock if coordinator else Lock():
             file_ok = await self.hass.async_add_executor_job(
                 self._cookies_file_ok, cf_path
             )
@@ -475,19 +468,24 @@ class GoogleMapsOptionsFlow(OptionsFlowWithConfigEntry, GoogleMapsFlow):
     async def async_step_done(self, _: dict[str, Any] | None = None) -> FlowResult:
         """Finish the flow."""
         if self._update_cookies:
-            async with self._cookies_lock:
-                await self.hass.async_add_executor_job(
-                    self._save_cookies, self.config_entry.data[CONF_COOKIES_FILE]
-                )
+            # As with reauth flow above, we can't just save the new cookies and let the
+            # config be reloaded because the unload step will overwrite the new cookies
+            # we would have just saved. So we need to unload it before saving the
+            # cookies.
+            await self.hass.config_entries.async_unload(self.config_entry.entry_id)
+            await self.hass.async_add_executor_job(
+                self._save_cookies, self.config_entry.data[CONF_COOKIES_FILE]
+            )
             # Cookies file content has been updated, so config entry needs to be
-            # reloaded to use the new cookies. However, if none of the (other) options
+            # (re)loaded to use the new cookies. However, if none of the (other) options
             # have actually changed, the entry update listeners won't be called, and the
             # entry will therefore not get reloaded. If this is the case, initiate a
-            # reload from here. We don't have to worry about the flow being completely
-            # finished because neither the config data nor options are changing.
+            # load (aka setup) from here. We don't have to worry about the flow being
+            # completely finished because neither the config data nor options are
+            # changing.
             if self.options == self.config_entry.options:
                 self.hass.async_create_task(
-                    self.hass.config_entries.async_reload(self.config_entry.entry_id)
+                    self.hass.config_entries.async_setup(self.config_entry.entry_id)
                 )
 
         return self.async_create_entry(title="", data=self.options)
