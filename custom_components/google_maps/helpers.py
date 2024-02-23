@@ -1,34 +1,18 @@
 """Google Maps helper functions, etc."""
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import asdict as dc_asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, NewType, Self, cast
 
-from homeassistant.const import (
-    ATTR_BATTERY_CHARGING,
-    ATTR_BATTERY_LEVEL,
-    ATTR_ENTITY_PICTURE,
-    ATTR_GPS_ACCURACY,
-    ATTR_LATITUDE,
-    ATTR_LONGITUDE,
-)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.restore_state import ExtraStoredData
 from homeassistant.helpers.storage import STORAGE_DIR
 from homeassistant.util import dt as dt_util, slugify
 
-from .const import (
-    ATTR_ADDRESS,
-    ATTR_LAST_SEEN,
-    ATTR_NICKNAME,
-    COOKIE_WARNING_PERIOD,
-    CREDENTIALS_FILE,
-    DOMAIN,
-)
+from .const import COOKIE_WARNING_PERIOD, CREDENTIALS_FILE, DOMAIN
 from .gm_loc_sharing import GMPerson
 
 
@@ -74,27 +58,17 @@ class LocationData:
         """Return a dict representation of the data."""
         return dc_asdict(self)
 
-    @staticmethod
-    def _last_seen(data: Mapping[str, Any], key: str) -> datetime:
-        """Get last_seen from mapping, converting to datetime if necessary."""
-        last_seen: datetime | str | None
-        try:
-            last_seen = cast(datetime | str, data[key])
-            if isinstance(last_seen, datetime):
-                return last_seen
-            last_seen = dt_util.parse_datetime(last_seen)
-        except (KeyError, TypeError) as err:
-            raise FromAttributesError from err
-        if last_seen is None:
-            raise FromAttributesError
-        return last_seen
-
     @classmethod
     def from_dict(cls, restored: dict[str, Any]) -> Self | None:
         """Initialize location data from a dict."""
+        last_seen: datetime | str | None
         try:
-            last_seen = cls._last_seen(restored, "last_seen")
-        except FromAttributesError:
+            last_seen = cast(datetime | str, restored["last_seen"])
+            if not isinstance(last_seen, datetime):
+                last_seen = dt_util.parse_datetime(last_seen)
+        except (KeyError, TypeError):
+            return None
+        if last_seen is None:
             return None
         try:
             return cls(
@@ -117,21 +91,6 @@ class LocationData:
             person.latitude,
             person.longitude,
         )
-
-    @classmethod
-    def from_attributes(cls, attrs: Mapping[str, Any]) -> Self:
-        """Initialize location data from state attributes."""
-        last_seen = cls._last_seen(attrs, ATTR_LAST_SEEN)
-        try:
-            return cls(
-                attrs[ATTR_ADDRESS],
-                attrs[ATTR_GPS_ACCURACY],
-                last_seen,
-                attrs[ATTR_LATITUDE],
-                attrs[ATTR_LONGITUDE],
-            )
-        except KeyError as err:
-            raise FromAttributesError from err
 
 
 @dataclass(frozen=True)
@@ -172,20 +131,6 @@ class MiscData:
             person.full_name,
             person.nickname,
         )
-
-    @classmethod
-    def from_attributes(cls, attrs: Mapping[str, Any], full_name: str) -> Self:
-        """Initialize miscellaneous data from state attributes."""
-        try:
-            return cls(
-                attrs.get(ATTR_BATTERY_CHARGING),
-                attrs.get(ATTR_BATTERY_LEVEL),
-                attrs.get(ATTR_ENTITY_PICTURE),
-                full_name,
-                attrs[ATTR_NICKNAME],
-            )
-        except KeyError as err:
-            raise FromAttributesError from err
 
 
 @dataclass(frozen=True)
