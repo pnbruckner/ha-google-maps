@@ -132,7 +132,7 @@ class GMPerson:
 
     @classmethod
     def acct_from_data(cls, data: Sequence[Any], account_email: str) -> Self | None:
-        """Initialize shared person from server data."""
+        """Initialize account holder from server data."""
         try:
             return cls(
                 account_email,

@@ -68,8 +68,6 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
 
         self._api = GMLocSharing(self._username)
         self._cookie_lock = Lock()
-        # TODO: Is this necessary? I.e., is coordinator always shutdown, because config
-        # entry is always unloaded, when HA is shutting down or not???
         self._unsub_final_write = hass.bus.async_listen_once(
             EVENT_HOMEASSISTANT_FINAL_WRITE, self._save_cookies_if_changed
         )
