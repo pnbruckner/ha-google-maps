@@ -242,6 +242,7 @@ class GMLocSharing:
         try:
             if self._data[6] == "GgA=":
                 self._dump_cookies()
+                _LOGGER.debug("%s: Parsed data: %s", self._account_email, self._data)
                 raise InvalidCookies("Invalid session indicated")
         except IndexError:
             raise InvalidData(f"Unexpected parsed data: {self._data}") from None
@@ -280,8 +281,7 @@ class GMLocSharing:
             else:
                 expiration = None
             data.append((cookie.name, expiration))
-        data.sort(key=lambda d: d[0])
-        data.sort(key=lambda d: datetime.min if d[1] is None else d[1])
+        data.sort(key=lambda d: (datetime.max if d[1] is None else d[1], d[0]))
         _LOGGER.debug(
             "%s: Cookies: %s",
             self._account_email,
