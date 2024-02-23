@@ -222,7 +222,7 @@ class GMLocSharing:
     def save_cookies(self, cookies_file: str) -> None:
         """Save cookies to file."""
         self._dump_changed_cookies()
-        self._cookies.save(cookies_file)
+        self._cookies.save(cookies_file, ignore_discard=True)
         self._cookies_file_data = self._cookie_data
 
     def get_new_data(self) -> None:
