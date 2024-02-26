@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import logging
+from pathlib import Path
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
@@ -63,7 +64,9 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
         """Initialize coordinator."""
         self._cid = ConfigID(entry.entry_id)
         self._username = entry.data[CONF_USERNAME]
-        self._cookies_file = str(cookies_file_path(hass, entry.data[CONF_COOKIES_FILE]))
+        self._cookies_file = str(
+            cookies_file_path(hass, entry.options[CONF_COOKIES_FILE])
+        )
         self._create_acct_entity = entry.options[CONF_CREATE_ACCT_ENTITY]
 
         self._api = GMLocSharing(self._username)
@@ -72,12 +75,8 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
             EVENT_HOMEASSISTANT_FINAL_WRITE, self._save_cookies_if_changed
         )
 
-        super().__init__(
-            hass,
-            _LOGGER,
-            name=f"Google Maps ({entry.title})",
-            update_interval=timedelta(seconds=entry.options[CONF_SCAN_INTERVAL]),
-        )
+        scan_interval = timedelta(seconds=entry.options[CONF_SCAN_INTERVAL])
+        super().__init__(hass, _LOGGER, name=entry.title, update_interval=scan_interval)
         # always_update added in 2023.9.0b0.
         if hasattr(self, "always_update"):
             self.always_update = False
@@ -91,7 +90,16 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
         """Cancel listeners, save cookies & close API."""
         await super().async_shutdown()
         self._unsub_all()
-        await self._save_cookies_if_changed(shutting_down=True)
+        cur_cookies_file = str(
+            cookies_file_path(self.hass, self.config_entry.options[CONF_COOKIES_FILE])
+        )
+        # Has cookies file name changed, e.g., due to reauth or user reconfiguration?
+        # If not, save cookies to existing file. If so, delete file that was being used
+        # because there's a new one to be used after reload/restart.
+        if cur_cookies_file == self._cookies_file:
+            await self._save_cookies_if_changed(shutting_down=True)
+        else:
+            await self.hass.async_add_executor_job(Path(self._cookies_file).unlink)
         self._api.close()
 
     def _unsub_all(self) -> None:

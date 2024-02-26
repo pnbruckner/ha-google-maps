@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from functools import partial
+import logging
 from typing import cast
 
 from homeassistant.components.device_tracker import DOMAIN as DT_DOMAIN
@@ -14,12 +15,38 @@ from .const import CONF_COOKIES_FILE, CONF_CREATE_ACCT_ENTITY, DOMAIN, NAME_PREF
 from .coordinator import GMDataUpdateCoordinator, GMIntegData
 from .helpers import ConfigID, ConfigUniqueIDs, cookies_file_path
 
+_LOGGER = logging.getLogger(__name__)
 _PLATFORMS = [Platform.DEVICE_TRACKER]
 
 
 async def entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle config entry update."""
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate config entry."""
+    _LOGGER.debug("%s: Migrating from version %s", entry.title, entry.version)
+
+    if entry.version > 2:
+        # Can't downgrade from some unknown future version.
+        return False
+
+    if entry.version == 1:
+        data = dict(entry.data)
+        options = dict(entry.options)
+        options[CONF_COOKIES_FILE] = data.pop(CONF_COOKIES_FILE)
+        try:
+            hass.config_entries.async_update_entry(
+                entry, data=data, options=options, version=2
+            )
+        except TypeError:
+            # 2024.2 and earlier did not accept version as a parameter.
+            entry.version = 2
+            hass.config_entries.async_update_entry(entry, data=data, options=options)
+
+    _LOGGER.debug("%s: Migration to version %s successful", entry.title, entry.version)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
