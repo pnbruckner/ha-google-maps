@@ -263,10 +263,11 @@ class GMLocSharing:
                 people.append(person)
             else:
                 bad_data.append(self._data[9])
-        if bad_data:
-            raise InvalidData(
-                "Invalid data for one or more people: "
-                + "; ".join(f"<{d}>" for d in bad_data)
+        for bad_person_data in bad_data:
+            _LOGGER.debug(
+                "%s: Missing location or other data for person: %s",
+                self._account_email,
+                bad_person_data,
             )
         return people
 
