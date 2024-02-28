@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from contextlib import suppress
 from copy import copy
 import logging
 from typing import Any, cast
 
 from locationsharinglib import Service
-from locationsharinglib.locationsharinglibexceptions import InvalidCookies
+from locationsharinglib.locationsharinglibexceptions import (
+    InvalidCookies as lsl_InvalidCookies,
+)
 import voluptuous as vol
 
 from homeassistant.components.device_tracker import (
@@ -46,17 +47,6 @@ from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util, slugify
 
-from . import (
-    ConfigID,
-    FromAttributesError,
-    GMDataUpdateCoordinator,
-    GMIntegData,
-    LocationData,
-    MiscData,
-    PersonData,
-    UniqueID,
-    old_cookies_file_path,
-)
 from .const import (
     ATTR_ADDRESS,
     ATTR_FULL_NAME,
@@ -67,6 +57,15 @@ from .const import (
     DEF_SCAN_INTERVAL,
     DOMAIN,
     NAME_PREFIX,
+)
+from .coordinator import GMDataUpdateCoordinator, GMIntegData
+from .helpers import (
+    ConfigID,
+    LocationData,
+    MiscData,
+    PersonData,
+    UniqueID,
+    old_cookies_file_path,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -121,7 +120,7 @@ class GoogleMapsScanner:
 
             self.success_init = True
 
-        except InvalidCookies:
+        except lsl_InvalidCookies:
             _LOGGER.error(
                 "The cookie file provided does not provide a valid session. Please"
                 " create another one and try again"
@@ -268,13 +267,13 @@ class GoogleMapsDeviceTracker(
         """Return entity specific state attributes."""
         if self._misc is None:
             return None
-        attrs: dict[str, Any] = {ATTR_BATTERY_CHARGING: self._misc.battery_charging}
+        attrs: dict[str, Any] = {ATTR_NICKNAME: self._misc.nickname}
+        if (charging := self._misc.battery_charging) is not None:
+            attrs[ATTR_BATTERY_CHARGING] = charging
         if self._loc:
             attrs[ATTR_ADDRESS] = self._loc.address
-        attrs[ATTR_NICKNAME] = self._misc.nickname
-        if self._loc:
             attrs[ATTR_LAST_SEEN] = self._loc.last_seen
-        return attrs
+        return dict(sorted(attrs.items()))
 
     @property
     def device_info(self) -> DeviceInfo | None:
@@ -342,29 +341,15 @@ class GoogleMapsDeviceTracker(
         await super().async_added_to_hass()
 
         # Restore state if possible.
-        if last_state := await self.async_get_last_state():
-            # extra_restore_state_data was not implemented in 1.0.0b2 or earlier, so if
-            # it's not available, try restoring from saved attributes like what was done
-            # then.
-            last_extra_data = None
-            if res_last_extra_data := await self.async_get_last_extra_data():
-                last_extra_data = PersonData.from_dict(res_last_extra_data.as_dict())
-            attrs = last_state.attributes
-
-            # Always restore loc data as "previous location" first, then overwrite with
-            # new location below if available and "better."
-            if last_extra_data:
-                self._loc = last_extra_data.loc
-            else:
-                with suppress(FromAttributesError):
-                    self._loc = LocationData.from_attributes(attrs)
+        if (last_extra_data := await self.async_get_last_extra_data()) and (
+            last_person_data := PersonData.from_dict(last_extra_data.as_dict())
+        ):
+            # Always restore loc data as "previous location" first, then overwrite
+            # with new location below if available and "better."
+            self._loc = last_person_data.loc
             # Only restore misc data if we didn't get any when initialized.
             if self._misc is None:
-                if last_extra_data:
-                    self._misc = last_extra_data.misc
-                else:
-                    with suppress(FromAttributesError):
-                        self._misc = MiscData.from_attributes(attrs, self._full_name)
+                self._misc = last_person_data.misc
 
         # Now that previous state has been restored, update with new data if possible.
         if not (data := self.coordinator.data.get(cast(UniqueID, self.unique_id))):

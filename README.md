@@ -324,3 +324,7 @@ If/when any "legacy" trackers are no longer desired, they can be removed from th
 2. Removing associated entries in `known_devices.yaml`.
 If that would make the file empty, then the file can simply be deleted instead.
 3. Restarting Home Assistant.
+
+Note that there will still be history for the legacy trackers, at least for a while.
+You can purge that history via the `recorder.purge_entities` service.
+See the [Recorder](https://www.home-assistant.io/integrations/recorder/) integration documentation for more details.
