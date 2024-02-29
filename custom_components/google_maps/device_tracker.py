@@ -56,6 +56,7 @@ from .const import (
     CONF_MAX_GPS_ACCURACY,
     DEF_SCAN_INTERVAL,
     DOMAIN,
+    DT_NO_RECORD_ATTRS,
     NAME_PREFIX,
 )
 from .coordinator import GMDataUpdateCoordinator, GMIntegData
@@ -222,7 +223,7 @@ class GoogleMapsDeviceTracker(
 ):
     """Google Maps Device Tracker."""
 
-    _unrecorded_attributes = frozenset({ATTR_ADDRESS, ATTR_NICKNAME})
+    _unrecorded_attributes = DT_NO_RECORD_ATTRS
     _attr_attribution = ATTRIBUTION
     _attr_translation_key = "tracker"
 
