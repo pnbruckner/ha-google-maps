@@ -226,19 +226,18 @@ Pers acct only | Yes | Others share w/ Pers acct. | No additional accts to creat
 Alt acct only | No | Everybody who wants to, including yourself, shares w/ Alt acct. | Your personal tracker will _not_ be missing data. Everyone can decide if they want to share their location w/ HA, including yourself. | Possibly create & manage an additional acct. People may need to share their location w/ a 2nd acct.
 Pers & Alt accts | No | You share w/ Alt acct, everyone else shares w/ Pers acct. | Your personal tracker will _not_ be missing data. Nobody else has to change their location sharing. | Create & manage additional Google Acct. Others cannot independently control data being shared with HA.
 
-The last strategy is probably the best overall, and if chosen will require obtaining the cookies files for both accounts and adding them both to the integration separately.
+The last strategy is probably the best overall, and if chosen will require obtaining a separate cookies file for each account and adding them both to the integration separately.
 One of the other two strategies may better suit your personal situation or needs.
 
-> **NOTE**: Some people have discovered that using their personal account causes the cookies to expire very quickly.
-> If you are experiencing this, then the "Alt acct only" strategy may be your only viable option.
+> **NOTE**: See the [troubleshooting](#troubleshooting) section for more considerations when choosing an account strategy.
 
 ## Obtaining a Cookies File
 
 > **IMPORTANT**:
 > 
 > In the procedures that follow you will sign into Google.
-> It is extremely important to NOT log out from Google in the browser you use to get the cookies file.
-> Just close the browser as the procedures instruction _without_ logging out first.
+> It is extremely important to NOT sign out from Google in the browser you use to get the cookies file.
+> Just close the browser as the procedures instruct _without_ signing out first.
 
 The procedure for each browser type uses the [Get cookies.txt LOCALLY](https://github.com/kairi003/Get-cookies.txt-Locally) extension.
 There is one version of the extension that works in Chrome and Edge, and another for Firefox.
@@ -315,6 +314,46 @@ There is one version of the extension that works in Chrome and Edge, and another
 7. Immediately close the Private window.
 
 </details>
+
+## Troubleshooting
+### Overview
+
+Google does not provide a documented and supported API for obtaining location data.
+Like many other Home Assistant integrations, this one is based on reverse engineering the interaction between a browser and Google.
+In effect, this integration pretends to be a broswer.
+In fact, it pretends to be the browser session you use to obtain the cookies file.
+
+Therefore, it is important not to let the Google servers think the session has closed or should otherwise be invalidated.
+The procedures above were written from this perspective.
+
+However, being undocumented, there are times where this approach does not work for some people in some situations.
+If this happens to you, then the following information might help.
+Unfortunately, there are no guarantees.
+
+### Use "Alt acct only" Strategy
+
+There is some evidence that signing out of the account used with this integration, even from other browser or app sessions,
+can invalidate the session used to obtain the cookies file, which then prevents the integration from working correctly.
+This doesn't always happen, but apparently can.
+Therefore, if you are having problems where the integration works for a while but then stops updating,
+or complains that the cookies have expired,
+it is best to try using the "Alt acct only" strategy,
+and sign into that account _only with this Home Assistant integration_.
+I.e., once the integration is set up, do not sign into that account anywhere else.
+
+### Sign Out of All Current Sessions and Try Again
+
+As described above, Google might decide to invalidate the session used by this integration,
+even if the cookies have not "expired".
+Performing the following procedure, and then [obtaining and uploading a _new_ cookies file](#obtaining-a-cookies-file),
+might resolve the problem.
+
+1. Delete the integration entry that is having trouble.
+2. Go to [Google Account](https://account.google.com/) in a private browser window.
+3. Sign into the problematic account.
+4. Go to Security → "Manage all devices" (under "Your devices"). All currently signed in sessions (including the one you just started) should be listed. Click on, and "Sign out" of, all of those sessions. You won't, of course, be able to sign out of the current session (probably listed at the top) this way.
+5. Now sign out of the current session (via the icon in the top-right part of the window), and close this private browser window.
+6. Obtain a new cookies file and add the account to the integration again.
 
 ## Removing Legacy Trackers
 
