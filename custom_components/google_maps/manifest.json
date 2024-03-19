@@ -3,11 +3,11 @@
   "name": "Google Maps",
   "codeowners": ["@pnbruckner"],
   "config_flow": true,
-  "dependencies": ["file_upload"],
+  "dependencies": ["device_tracker", "file_upload"],
   "documentation": "https://github.com/pnbruckner/ha-google-maps/blob/1.3.1/README.md",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/pnbruckner/ha-google-maps/issues",
   "loggers": [],
-  "requirements": [],
+  "requirements": ["locationsharinglib==5.0.1"],
   "version": "1.3.1"
 }
