@@ -78,24 +78,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             dev_reg.async_remove_device(device.id)
         unique_ids.release(cid, username)
 
-    # The code here: https://github.com/home-assistant/core/blob/0fa395556db8ba97ec95d103c9a232f7ab964432/homeassistant/components/device_tracker/config_entry.py#L54-L74
-    # deletes any devices that are associated with any entities in the device_tracker
-    # domain that are not also associated with any entities in any other domains.
-    # This was apparently to fix issues from some much older HA version. However,
-    # although we generally just recreate those devices, there is a race condition that
-    # can happen where the above referenced code will also remove the entity from the
-    # entity registry. That can cause the entity to disappear from the system, even
-    # though our device_tracker code is still updating it.
-    # See issue: https://github.com/pnbruckner/ha-google-maps/issues/25
-    # To work around that code (that should have been removed a long time ago), we'll
-    # temporarily disassociate our entities from their devices. This will prevent the
-    # problem code from removing our entities from the entity registry. When our
-    # entities are added to hass, the devices will be recreated (if necessary) and the
-    # entities will be reassociated with them.
-    for uid in unique_ids.owned(cid):
-        if entity_id := ent_reg.async_get_entity_id(DT_DOMAIN, DOMAIN, uid):
-            ent_reg.async_update_entity(entity_id, device_id=None)
-
     coordinator = GMDataUpdateCoordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
     gmi_data.coordinators[cid] = coordinator
