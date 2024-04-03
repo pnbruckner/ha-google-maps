@@ -16,7 +16,7 @@ from .coordinator import GMDataUpdateCoordinator, GMIntegData
 from .helpers import ConfigID, ConfigUniqueIDs, cookies_file_path
 
 _LOGGER = logging.getLogger(__name__)
-_PLATFORMS = [Platform.DEVICE_TRACKER]
+_PLATFORMS = [Platform.BINARY_SENSOR, Platform.DEVICE_TRACKER]
 
 
 async def entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:

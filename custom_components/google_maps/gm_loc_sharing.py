@@ -198,7 +198,7 @@ class GMLocSharing:
         expirations: list[int] = []
         for name in _VALID_COOKIE_NAMES:
             if (data := cookie_data.get(name)) and (expiration := data[0]):
-                expirations.append(expiration)
+                expirations.append(expiration)  # noqa: PERF401
         if not expirations:
             return None
         return datetime.fromtimestamp(min(expirations)).astimezone()

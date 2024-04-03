@@ -295,6 +295,11 @@ class GoogleMapsDeviceTracker(
         return self._misc.entity_picture
 
     @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return True
+
+    @property
     def force_update(self) -> bool:
         """Return True if state updates should be forced."""
         return False
