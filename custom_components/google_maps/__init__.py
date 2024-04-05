@@ -7,9 +7,10 @@ from typing import cast
 
 from homeassistant.components.device_tracker import DOMAIN as DT_DOMAIN
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_USERNAME, Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.const import CONF_USERNAME, EVENT_HOMEASSISTANT_STOP, Platform
+from homeassistant.core import Event, HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers.typing import ConfigType
 
 from .const import CONF_COOKIES_FILE, CONF_CREATE_ACCT_ENTITY, DOMAIN, NAME_PREFIX
 from .coordinator import GMDataUpdateCoordinator, GMIntegData
@@ -17,6 +18,29 @@ from .helpers import ConfigID, ConfigUniqueIDs, cookies_file_path
 
 _LOGGER = logging.getLogger(__name__)
 _PLATFORMS = [Platform.BINARY_SENSOR, Platform.DEVICE_TRACKER]
+
+
+async def async_setup(hass: HomeAssistant, _: ConfigType) -> bool:
+    """Set up integration."""
+    hass.data[DOMAIN] = GMIntegData(ConfigUniqueIDs(hass))
+    ent_reg = er.async_get(hass)
+
+    async def device_work_around(_: Event) -> None:
+        """Work around for device tracker component deleting devices.
+
+        The device tracker component level code, at startup, deletes devices that are
+        associated only with device_tracker entities. Not only that, it will delete
+        those device_tracker entities from the entity registry as well. So, when HA
+        shuts down, remove references to devices from our device_tracker entity registry
+        entries. They'll get set back up automatically the next time our config is
+        loaded (i.e., setup.)
+        """
+        for c_entry in hass.config_entries.async_entries(DOMAIN):
+            for r_entry in er.async_entries_for_config_entry(ent_reg, c_entry.entry_id):
+                ent_reg.async_update_entity(r_entry.entity_id, device_id=None)
+
+    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, device_work_around)
+    return True
 
 
 async def entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -55,8 +79,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     username = entry.data[CONF_USERNAME]
     create_acct_entity = entry.options[CONF_CREATE_ACCT_ENTITY]
 
-    if not (gmi_data := cast(GMIntegData | None, hass.data.get(DOMAIN))):
-        hass.data[DOMAIN] = gmi_data = GMIntegData(ConfigUniqueIDs(hass))
+    gmi_data = cast(GMIntegData, hass.data.get(DOMAIN))
 
     # For "account person", unique ID is username (which is also returned in person.id.)
     ent_reg = er.async_get(hass)
