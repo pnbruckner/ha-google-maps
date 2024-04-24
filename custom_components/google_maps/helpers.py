@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, NewType, Self, cast
 
+from homeassistant.components.device_tracker import DOMAIN as DT_DOMAIN
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.restore_state import ExtraStoredData
@@ -185,6 +186,7 @@ class ConfigUniqueIDs:
             cfg_uids = {
                 cast(UniqueID, ent.unique_id)
                 for ent in er.async_entries_for_config_entry(ent_reg, cid)
+                if ent.domain == DT_DOMAIN
             }
             self._all_uids.update(cfg_uids)
             self._cfg_uids[cid] = cfg_uids
