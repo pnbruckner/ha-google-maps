@@ -73,6 +73,7 @@ class GoogleMapsFlow(FlowHandler):
     _username: str
     _api: GMLocSharing
     _expiration: datetime | None
+    _cf_path: Path | None = None
     # The following is only used in the reauth flow.
     _reauth_entry: ConfigEntry | None = None
 
@@ -130,11 +131,13 @@ class GoogleMapsFlow(FlowHandler):
                 return await self.async_step_reauth_done()
             return await self.async_step_account_entity()
 
-        cf_path = old_cookies_file_path(self.hass, self._username)
-        if not cf_path.is_file():
+        self._cf_path = old_cookies_file_path(self.hass, self._username)
+        if not self._cf_path.is_file():
             return await self.async_step_get_cookies_procedure_menu()
-        if not await self.hass.async_add_executor_job(self._cookies_file_ok, cf_path):
-            return await self.async_step_old_cookies_invalid(cf_path=cf_path)
+        if not await self.hass.async_add_executor_job(
+            self._cookies_file_ok, self._cf_path
+        ):
+            return await self.async_step_old_cookies_invalid()
 
         data_schema = vol.Schema(
             {vol.Required(_CONF_USE_EXISTING_COOKIES): BooleanSelector()}
@@ -147,25 +150,25 @@ class GoogleMapsFlow(FlowHandler):
             data_schema=data_schema,
             description_placeholders={
                 "username": self._username,
-                "cookies_file": str(cf_path.name),
+                "cookies_file": str(self._cf_path.name),
                 "expiration": exp_2_str(self._expiration),
             },
             last_step=False,
         )
 
     async def async_step_old_cookies_invalid(
-        self, user_input: dict[str, Any] | None = None, *, cf_path: Path | None = None
+        self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Upload a cookies file."""
         if user_input is not None:
             return await self.async_step_get_cookies_procedure_menu()
 
-        assert cf_path
+        assert self._cf_path
         return self.async_show_form(
             step_id="old_cookies_invalid",
             description_placeholders={
                 "username": self._username,
-                "cookies_file": str(cf_path.name),
+                "cookies_file": str(self._cf_path.name),
             },
             last_step=False,
         )
