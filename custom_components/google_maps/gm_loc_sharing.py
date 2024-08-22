@@ -51,6 +51,7 @@ _RETRIES_STATUSES = frozenset(
     }
 )
 _RETRIES_BACKOFF = 0.25
+_TIMEOUT = 60
 
 _VALID_COOKIE_NAMES = {"__Secure-1PSID", "__Secure-3PSID"}
 
@@ -228,7 +229,9 @@ class GMLocSharing:
     def get_new_data(self) -> None:
         """Get new data from Google server."""
         try:
-            resp = self._session.get(_URL, params=_PARAMS, verify=True)
+            resp = self._session.get(
+                _URL, params=_PARAMS, timeout=_TIMEOUT, verify=True
+            )
             resp.raise_for_status()
         except (RequestException, MaxRetryError) as err:
             raise RequestFailed(f"{err.__class__.__name__}: {err}") from err
