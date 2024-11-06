@@ -248,7 +248,7 @@ class GoogleMapsDeviceTracker(
             self._misc = copy(data.misc)
         else:
             # Created from Entity Registry. Get name from there.
-            # The rest is restored in async_added_to_hass if possible..
+            # The rest is restored in async_added_to_hass if possible.
             ent_reg = er.async_get(coordinator.hass)
             self._attr_name = ent_reg.entities[
                 cast(
@@ -273,7 +273,7 @@ class GoogleMapsDeviceTracker(
             attrs[ATTR_BATTERY_CHARGING] = charging
         if self._loc:
             attrs[ATTR_ADDRESS] = self._loc.address
-            attrs[ATTR_LAST_SEEN] = self._loc.last_seen
+            attrs[ATTR_LAST_SEEN] = dt_util.as_local(self._loc.last_seen)
         return dict(sorted(attrs.items()))
 
     @property
@@ -379,20 +379,20 @@ class GoogleMapsDeviceTracker(
 
     def _update_loc(self, loc: LocationData) -> None:
         """Update location data if possible."""
-        prev_seen = self._loc and self._loc.last_seen
         last_seen = loc.last_seen
         # Don't use "new" loc data if it really isn't new.
-        if prev_seen and last_seen < prev_seen:
-            self._log_ignore_reason(
-                f"timestamp went backwards: {last_seen} < {prev_seen}"
-            )
-            return
-        if prev_seen and last_seen == prev_seen:
-            return
+        if prev_seen := self._loc and self._loc.last_seen:
+            if last_seen < prev_seen:
+                self._log_ignore_reason(
+                    "timestamp went backwards: "
+                    f"{dt_util.as_local(last_seen)} < {dt_util.as_local(prev_seen)}"
+                )
+                return
+            if last_seen == prev_seen:
+                return
 
-        prev_gps_accuracy = self._loc and self._loc.gps_accuracy
         last_gps_accuracy = loc.gps_accuracy
-        if prev_gps_accuracy:
+        if prev_gps_accuracy := self._loc and self._loc.gps_accuracy:
             # We have previous loc data.
             if prev_gps_accuracy <= self._max_gps_accuracy:
                 # Previous loc data is "accurate."

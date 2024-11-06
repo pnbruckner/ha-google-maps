@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import cached_property
 from http.cookiejar import MozillaCookieJar
 import json
@@ -86,7 +86,7 @@ class GMPerson:
     address: str
     country_code: str
     gps_accuracy: int
-    last_seen: datetime
+    last_seen: float
     latitude: float
     longitude: float
 
@@ -98,9 +98,7 @@ class GMPerson:
 
     def __post_init__(self) -> None:
         """Post initialization."""
-        self.last_seen = datetime.fromtimestamp(
-            int(self.last_seen) / 1000  # type: ignore[call-overload]
-        ).astimezone()
+        self.last_seen = int(self.last_seen) / 1000
 
     @classmethod
     def shared_from_data(cls, data: Sequence[Any]) -> Self | None:
@@ -184,7 +182,7 @@ class GMLocSharing:
 
     @property
     def _cookie_data(self) -> CookieData:
-        """Return pertient data for current cookies."""
+        """Return pertinent data for current cookies."""
         return {cookie.name: (cookie.expires, cookie.value) for cookie in self._cookies}
 
     @property
@@ -194,7 +192,7 @@ class GMLocSharing:
 
     @property
     def cookies_expiration(self) -> datetime | None:
-        """Return expiration of 'important' cookies."""
+        """Return expiration of 'important' cookies in UTC."""
         cookie_data = self._cookie_data
         expirations: list[int] = []
         for name in _VALID_COOKIE_NAMES:
@@ -202,7 +200,7 @@ class GMLocSharing:
                 expirations.append(expiration)  # noqa: PERF401
         if not expirations:
             return None
-        return datetime.fromtimestamp(min(expirations)).astimezone()
+        return datetime.fromtimestamp(min(expirations), UTC)
 
     def close(self) -> None:
         """Close API."""

@@ -16,7 +16,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.helpers.event import async_track_point_in_time
+from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.helpers.issue_registry import (
     IssueSeverity,
     async_create_issue,
@@ -155,7 +155,7 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
                 self._api.cookies_changed
                 and (
                     shutting_down
-                    or dt_util.now() - self._cookies_last_synced  # noqa: F821
+                    or dt_util.utcnow() - self._cookies_last_synced  # noqa: F821
                     >= timedelta(minutes=15)
                 )
             ):
@@ -173,21 +173,21 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
     def _cookies_file_synced(self, shutting_down: bool = False) -> None:
         """Cookies file synced with current cookies."""
         cookies_expiration = self._api.cookies_expiration
-        self._cookies_last_synced = dt_util.now()
+        self._cookies_last_synced = dt_util.utcnow()
         if expiring_soon(cookies_expiration):
             self._create_issue()
         else:
             async_delete_issue(self.hass, DOMAIN, self._cid)
             if cookies_expiration and not shutting_down:
                 self._unsub_expiration()
-                self._unsub_exp = async_track_point_in_time(
+                self._unsub_exp = async_track_point_in_utc_time(
                     self.hass,
                     self._create_issue,
                     cookies_expiration - COOKIE_WARNING_PERIOD,
                 )
 
     @callback
-    def _create_issue(self, _now: datetime | None = None) -> None:
+    def _create_issue(self, _utcnow: datetime | None = None) -> None:
         """Create repair issue for cookies which are expiring soon."""
         async_create_issue(
             self.hass,
