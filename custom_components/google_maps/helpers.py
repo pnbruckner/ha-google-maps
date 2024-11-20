@@ -28,13 +28,15 @@ def cookies_file_path(hass: HomeAssistant, cookies_file: str) -> Path:
 
 
 def exp_2_str(expiration: datetime | None) -> str:
-    """Convert expiration to a string."""
-    return str(expiration) if expiration is not None else "unknown"
+    """Convert expiration to a string in local time zone."""
+    return str(dt_util.as_local(expiration)) if expiration is not None else "unknown"
 
 
 def expiring_soon(expiration: datetime | None) -> bool:
     """Return if cookies are expiring soon."""
-    return expiration is not None and expiration - dt_util.now() < COOKIE_WARNING_PERIOD
+    return (
+        expiration is not None and expiration - dt_util.utcnow() < COOKIE_WARNING_PERIOD
+    )
 
 
 ConfigID = NewType("ConfigID", str)
@@ -67,6 +69,8 @@ class LocationData:
             last_seen = cast(datetime | str, restored["last_seen"])
             if not isinstance(last_seen, datetime):
                 last_seen = dt_util.parse_datetime(last_seen)
+            if isinstance(last_seen, datetime):
+                last_seen = dt_util.as_utc(last_seen)
         except (KeyError, TypeError):
             return None
         if last_seen is None:
@@ -88,7 +92,7 @@ class LocationData:
         return cls(
             person.address,
             person.gps_accuracy,
-            person.last_seen,
+            dt_util.utc_from_timestamp(person.last_seen),
             person.latitude,
             person.longitude,
         )

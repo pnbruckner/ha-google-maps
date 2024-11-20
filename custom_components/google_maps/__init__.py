@@ -34,6 +34,8 @@ async def async_setup(hass: HomeAssistant, _: ConfigType) -> bool:
     async def device_work_around(_: Event) -> None:
         """Work around for device tracker component deleting devices.
 
+        Applies to HA versions prior to 2024.5:
+
         The device tracker component level code, at startup, deletes devices that are
         associated only with device_tracker entities. Not only that, it will delete
         those device_tracker entities from the entity registry as well. So, when HA
