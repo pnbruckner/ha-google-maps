@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from functools import partial
 import logging
-from typing import cast
+from typing import Any, cast
 
 from homeassistant.components.device_tracker import DOMAIN as DT_DOMAIN
 from homeassistant.config_entries import ConfigEntry
@@ -31,7 +31,7 @@ async def async_setup(hass: HomeAssistant, _: ConfigType) -> bool:
     hass.data[DOMAIN] = GMIntegData(ConfigUniqueIDs(hass))
     ent_reg = er.async_get(hass)
 
-    async def device_work_around(_: Event) -> None:
+    async def device_work_around(_: Any) -> None:
         """Work around for device tracker component deleting devices.
 
         Applies to HA versions prior to 2024.5:
