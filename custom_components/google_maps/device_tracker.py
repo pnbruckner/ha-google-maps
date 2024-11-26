@@ -28,11 +28,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv, entity_registry as er
-from homeassistant.helpers.device_registry import (
-    STORAGE_VERSION_MAJOR,
-    STORAGE_VERSION_MINOR,
-    DeviceInfo,
-)
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import track_time_interval
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -250,6 +246,11 @@ class GoogleMapsDeviceTracker(
                 )
             ].original_name
             self._full_name = cast(str, self._attr_name).removeprefix(f"{NAME_PREFIX} ")
+        self._attr_device_info = DeviceInfo(  # type: ignore[assignment]
+            identifiers={(DOMAIN, uid)},
+            name=self._full_name,
+            serial_number=uid,
+        )
 
     @property
     def suggested_object_id(self) -> str:
@@ -268,17 +269,6 @@ class GoogleMapsDeviceTracker(
             attrs[ATTR_ADDRESS] = self._loc.address
             attrs[ATTR_LAST_SEEN] = dt_util.as_local(self._loc.last_seen)
         return dict(sorted(attrs.items()))
-
-    @property
-    def device_info(self) -> DeviceInfo | None:
-        """Return device specific attributes."""
-        info = DeviceInfo(
-            identifiers={(DOMAIN, cast(str, self.unique_id))},
-            name=self._full_name,
-        )
-        if (STORAGE_VERSION_MAJOR, STORAGE_VERSION_MINOR) >= (1, 4):
-            info["serial_number"] = self.unique_id
-        return info
 
     @property
     def entity_picture(self) -> str | None:

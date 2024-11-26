@@ -62,7 +62,7 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
         self._create_acct_entity = entry.options[CONF_CREATE_ACCT_ENTITY]
 
         self._api = GMLocSharing(self._username)
-        self._cookie_lock = Lock()
+        self.cookie_lock = Lock()
         self._unsub_final_write = hass.bus.async_listen_once(
             EVENT_HOMEASSISTANT_FINAL_WRITE, self._save_cookies_if_changed
         )
@@ -72,11 +72,6 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
         # always_update added in 2023.9.0b0.
         if hasattr(self, "always_update"):
             self.always_update = False
-
-    @property
-    def cookie_lock(self) -> Lock:
-        """Return cookie lock."""
-        return self._cookie_lock
 
     async def async_shutdown(self) -> None:
         """Cancel listeners, save cookies & close API."""
@@ -105,8 +100,8 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
             self._unsub_exp()
             self._unsub_exp = None
 
-    async def async_config_entry_first_refresh(self) -> None:
-        """Refresh data for the first time when a config entry is setup."""
+    async def _async_setup(self) -> None:
+        """Set up the coordinator."""
         # Load the cookies before first update.
         async with self.cookie_lock:
             try:
@@ -116,8 +111,6 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
             except (InvalidCookiesFile, InvalidCookies) as err:
                 raise ConfigEntryAuthFailed(f"{err.__class__.__name__}: {err}") from err
             self._cookies_file_synced()
-
-        await super().async_config_entry_first_refresh()
 
     async def _async_update_data(self) -> GMData:
         """Fetch the latest data from the source."""
