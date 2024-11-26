@@ -13,10 +13,14 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.components.file_upload import process_uploaded_file
-from homeassistant.config_entries import ConfigFlow, OptionsFlowWithConfigEntry
+from homeassistant.config_entries import (
+    ConfigEntryBaseFlow,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlowWithConfigEntry,
+)
 from homeassistant.const import CONF_SCAN_INTERVAL, CONF_USERNAME
 from homeassistant.core import callback
-from homeassistant.data_entry_flow import FlowHandler, FlowResult
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.selector import (
     BooleanSelector,
@@ -57,7 +61,7 @@ _CONF_USE_EXISTING_COOKIES = "use_existing_cookies"
 _GMSERVICE_ERRORS = (InvalidCookies, InvalidCookiesFile, InvalidData, RequestFailed)
 
 
-class GoogleMapsFlow(FlowHandler):
+class GoogleMapsFlow(ConfigEntryBaseFlow):
     """Google Maps flow mixin."""
 
     _username: str
@@ -112,7 +116,7 @@ class GoogleMapsFlow(FlowHandler):
 
     async def async_step_cookies(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Get a cookies file."""
         if user_input is not None:
             if not user_input[_CONF_USE_EXISTING_COOKIES]:
@@ -148,7 +152,7 @@ class GoogleMapsFlow(FlowHandler):
 
     async def async_step_old_cookies_invalid(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Upload a cookies file."""
         if user_input is not None:
             return await self.async_step_get_cookies_procedure_menu()
@@ -165,7 +169,7 @@ class GoogleMapsFlow(FlowHandler):
 
     async def async_step_get_cookies_procedure_menu(
         self, _: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Display a list of procedures for obtaining a cookies file."""
         return self.async_show_menu(
             step_id="get_cookies_procedure_menu",
@@ -174,7 +178,7 @@ class GoogleMapsFlow(FlowHandler):
 
     async def async_step_chrome(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Display detailed instructions for Google Chrome."""
         if user_input is not None:
             return await self.async_step_cookies_upload()
@@ -187,7 +191,7 @@ class GoogleMapsFlow(FlowHandler):
 
     async def async_step_edge(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Display detailed instructions for Microsoft Edge."""
         if user_input is not None:
             return await self.async_step_cookies_upload()
@@ -200,7 +204,7 @@ class GoogleMapsFlow(FlowHandler):
 
     async def async_step_firefox(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Display detailed instructions for Mozilla Firefox."""
         if user_input is not None:
             return await self.async_step_cookies_upload()
@@ -213,7 +217,7 @@ class GoogleMapsFlow(FlowHandler):
 
     async def async_step_cookies_upload(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Upload a cookies file."""
         errors = {}
 
@@ -241,7 +245,7 @@ class GoogleMapsFlow(FlowHandler):
 
     async def async_step_uploaded_cookie_menu(
         self, _: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Use uploaded cookie file or try again."""
         menu_options = [
             "reauth_done" if self._reauth_entry else "account_entity",
@@ -258,7 +262,7 @@ class GoogleMapsFlow(FlowHandler):
 
     async def async_step_account_entity(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Determine if entity should be created for account."""
         if user_input is not None:
             self.options[CONF_CREATE_ACCT_ENTITY] = user_input[CONF_CREATE_ACCT_ENTITY]
@@ -287,7 +291,7 @@ class GoogleMapsFlow(FlowHandler):
 
     async def async_step_max_gps_accuracy(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Get maximum GPS accuracy."""
         if user_input is not None:
             self.options[CONF_MAX_GPS_ACCURACY] = int(user_input[CONF_MAX_GPS_ACCURACY])
@@ -310,7 +314,7 @@ class GoogleMapsFlow(FlowHandler):
 
     async def async_step_update_period(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Get update period."""
         if user_input is not None:
             self.options[CONF_SCAN_INTERVAL] = int(
@@ -329,12 +333,14 @@ class GoogleMapsFlow(FlowHandler):
         return self.async_show_form(step_id="update_period", data_schema=data_schema)
 
     @abstractmethod
-    async def async_step_done(self, _: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_done(
+        self, _: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Finish the user config or options flow."""
 
     async def async_step_reauth_done(
         self, _: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Finish the reauthorization flow."""
         raise NotImplementedError
 
@@ -359,7 +365,7 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Start user config flow."""
         if user_input is not None:
             self._username = user_input[CONF_USERNAME]
@@ -378,7 +384,7 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
             step_id="user", data_schema=data_schema, last_step=False
         )
 
-    async def async_step_reauth(self, data: Mapping[str, Any]) -> FlowResult:
+    async def async_step_reauth(self, data: Mapping[str, Any]) -> ConfigFlowResult:
         """Start reauthorization flow."""
         self._username = data[CONF_USERNAME]
         self._api = GMLocSharing(self._username)
@@ -389,7 +395,9 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
         self._options = dict(self._reauth_entry.options)
         return await self.async_step_cookies()
 
-    async def async_step_done(self, _: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_done(
+        self, _: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Finish the user config flow."""
         # Save cookies.
         await self._save_new_cookies()
@@ -401,7 +409,7 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
 
     async def async_step_reauth_done(
         self, _: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Finish the reauthorization flow."""
         # Save cookies.
         await self._save_new_cookies()
@@ -425,7 +433,7 @@ class GoogleMapsOptionsFlow(OptionsFlowWithConfigEntry, GoogleMapsFlow):
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Start options flow."""
         if user_input is not None:
             if user_input[_CONF_UPDATE_COOKIES]:
@@ -463,7 +471,9 @@ class GoogleMapsOptionsFlow(OptionsFlowWithConfigEntry, GoogleMapsFlow):
             last_step=False,
         )
 
-    async def async_step_done(self, _: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_done(
+        self, _: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Finish the flow."""
         if self._update_cookies:
             await self._save_new_cookies()
