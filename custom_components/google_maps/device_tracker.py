@@ -14,12 +14,11 @@ import voluptuous as vol
 
 from homeassistant.components.device_tracker import (
     DOMAIN as DT_DOMAIN,
-    PLATFORM_SCHEMA as PLATFORM_SCHEMA_BASE,
+    PLATFORM_SCHEMA as DEVICE_TRACKER_PLATFORM_SCHEMA,
     SeeCallback,
     SourceType,
 )
 from homeassistant.components.device_tracker.config_entry import TrackerEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     ATTR_BATTERY_CHARGING,
     ATTR_BATTERY_LEVEL,
@@ -53,8 +52,9 @@ from .const import (
     DT_NO_RECORD_ATTRS,
     NAME_PREFIX,
 )
-from .coordinator import GMDataUpdateCoordinator, GMIntegData
+from .coordinator import GMConfigEntry, GMDataUpdateCoordinator
 from .helpers import (
+    CFG_UNIQUE_IDS,
     ConfigID,
     LocationData,
     MiscData,
@@ -67,7 +67,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # the parent "device_tracker" have marked the schemas as legacy, so this
 # need to be refactored as part of a bigger rewrite.
-PLATFORM_SCHEMA = PLATFORM_SCHEMA_BASE.extend(
+PLATFORM_SCHEMA = DEVICE_TRACKER_PLATFORM_SCHEMA.extend(
     {
         vol.Required(CONF_USERNAME): cv.string,
         vol.Optional(CONF_MAX_GPS_ACCURACY, default=100000): vol.Coerce(float),
@@ -183,13 +183,12 @@ class GoogleMapsScanner:
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+    hass: HomeAssistant, entry: GMConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up the device tracker platform."""
     cid = cast(ConfigID, entry.entry_id)
-    gmi_data = cast(GMIntegData, hass.data[DOMAIN])
-    coordinator = gmi_data.coordinators[cid]
-    unique_ids = gmi_data.unique_ids
+    coordinator = entry.runtime_data
+    unique_ids = hass.data[CFG_UNIQUE_IDS]
 
     max_gps_accuracy = entry.options[CONF_MAX_GPS_ACCURACY]
     created_uids: set[UniqueID] = set()
@@ -306,7 +305,7 @@ class GoogleMapsDeviceTracker(
         return self._misc.battery_level
 
     @property
-    def source_type(self) -> SourceType | str:
+    def source_type(self) -> SourceType:
         """Return the source type of the device."""
         return SourceType.GPS
 

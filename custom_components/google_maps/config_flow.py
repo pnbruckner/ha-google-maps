@@ -8,16 +8,12 @@ from datetime import datetime
 import logging
 from os import PathLike
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import voluptuous as vol
 
 from homeassistant.components.file_upload import process_uploaded_file
-from homeassistant.config_entries import (
-    ConfigEntry,
-    ConfigFlow,
-    OptionsFlowWithConfigEntry,
-)
+from homeassistant.config_entries import ConfigFlow, OptionsFlowWithConfigEntry
 from homeassistant.const import CONF_SCAN_INTERVAL, CONF_USERNAME
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowHandler, FlowResult
@@ -45,7 +41,7 @@ from .const import (
     DOMAIN,
 )
 from .cookies import CHROME_PROCEDURE, EDGE_PROCEDURE, FIREFOX_PROCEDURE
-from .coordinator import GMIntegData
+from .coordinator import GMConfigEntry
 from .gm_loc_sharing import (
     GMLocSharing,
     InvalidCookies,
@@ -53,13 +49,7 @@ from .gm_loc_sharing import (
     InvalidData,
     RequestFailed,
 )
-from .helpers import (
-    ConfigID,
-    cookies_file_path,
-    exp_2_str,
-    expiring_soon,
-    old_cookies_file_path,
-)
+from .helpers import cookies_file_path, exp_2_str, expiring_soon, old_cookies_file_path
 
 _LOGGER = logging.getLogger(__name__)
 _CONF_UPDATE_COOKIES = "update_cookies"
@@ -75,7 +65,7 @@ class GoogleMapsFlow(FlowHandler):
     _expiration: datetime | None
     _cf_path: Path | None = None
     # The following is only used in the reauth flow.
-    _reauth_entry: ConfigEntry | None = None
+    _reauth_entry: GMConfigEntry | None = None
 
     @property
     @abstractmethod
@@ -358,7 +348,7 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry: ConfigEntry) -> GoogleMapsOptionsFlow:
+    def async_get_options_flow(config_entry: GMConfigEntry) -> GoogleMapsOptionsFlow:
         """Get the options flow for this handler."""
         return GoogleMapsOptionsFlow(config_entry)
 
@@ -428,6 +418,11 @@ class GoogleMapsOptionsFlow(OptionsFlowWithConfigEntry, GoogleMapsFlow):
 
     _update_cookies = False
 
+    @property
+    def config_entry(self) -> GMConfigEntry:
+        """Return the config entry linked to the current options flow."""
+        return super().config_entry
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -443,9 +438,11 @@ class GoogleMapsOptionsFlow(OptionsFlowWithConfigEntry, GoogleMapsFlow):
             self.hass, self.config_entry.options[CONF_COOKIES_FILE]
         )
         self._api = GMLocSharing(self._username)
-        gmi_data = cast(GMIntegData, self.hass.data[DOMAIN])
-        coordinator = gmi_data.coordinators.get(ConfigID(self.config_entry.entry_id))
-        async with coordinator.cookie_lock if coordinator else Lock():
+        if hasattr(self.config_entry, "runtime_data"):
+            lock = self.config_entry.runtime_data.cookie_lock
+        else:
+            lock = Lock()
+        async with lock:
             file_ok = await self.hass.async_add_executor_job(
                 self._cookies_file_ok, cf_path
             )

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from asyncio import Lock
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import logging
 from pathlib import Path
@@ -38,14 +37,7 @@ from .gm_loc_sharing import (
     InvalidData,
     RequestFailed,
 )
-from .helpers import (
-    ConfigID,
-    ConfigUniqueIDs,
-    PersonData,
-    UniqueID,
-    cookies_file_path,
-    expiring_soon,
-)
+from .helpers import ConfigID, PersonData, UniqueID, cookies_file_path, expiring_soon
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -204,9 +196,4 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
         )
 
 
-@dataclass
-class GMIntegData:
-    """Google Maps integration data."""
-
-    unique_ids: ConfigUniqueIDs
-    coordinators: dict[ConfigID, GMDataUpdateCoordinator] = field(default_factory=dict)
+type GMConfigEntry = ConfigEntry[GMDataUpdateCoordinator]
