@@ -126,7 +126,7 @@ class GoogleMapsFlow(ConfigEntryBaseFlow):
             return await self.async_step_account_entity()
 
         self._cf_path = old_cookies_file_path(self.hass, self._username)
-        if not self._cf_path.is_file():
+        if not await self.hass.async_add_executor_job(self._cf_path.is_file):
             return await self.async_step_get_cookies_procedure_menu()
         if not await self.hass.async_add_executor_job(
             self._cookies_file_ok, self._cf_path
