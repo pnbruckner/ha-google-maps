@@ -12,9 +12,12 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.restore_state import ExtraStoredData
 from homeassistant.helpers.storage import STORAGE_DIR
 from homeassistant.util import dt as dt_util, slugify
+from homeassistant.util.hass_dict import HassKey
 
 from .const import COOKIE_WARNING_PERIOD, CREDENTIALS_FILE, DOMAIN
 from .gm_loc_sharing import GMPerson
+
+CFG_UNIQUE_IDS: HassKey[ConfigUniqueIDs] = HassKey(DOMAIN)
 
 
 def old_cookies_file_path(hass: HomeAssistant, username: str) -> Path:

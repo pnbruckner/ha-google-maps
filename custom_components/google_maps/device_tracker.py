@@ -14,12 +14,11 @@ import voluptuous as vol
 
 from homeassistant.components.device_tracker import (
     DOMAIN as DT_DOMAIN,
-    PLATFORM_SCHEMA as PLATFORM_SCHEMA_BASE,
+    PLATFORM_SCHEMA as DEVICE_TRACKER_PLATFORM_SCHEMA,
     SeeCallback,
     SourceType,
 )
 from homeassistant.components.device_tracker.config_entry import TrackerEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     ATTR_BATTERY_CHARGING,
     ATTR_BATTERY_LEVEL,
@@ -29,17 +28,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv, entity_registry as er
-from homeassistant.helpers.device_registry import (
-    STORAGE_VERSION_MAJOR,
-    STORAGE_VERSION_MINOR,
-)
-
-# DeviceInfo moved in 2023.9.0b0
-try:
-    from homeassistant.helpers.device_registry import DeviceInfo
-except ImportError:
-    from homeassistant.helpers.entity import DeviceInfo  # type: ignore[attr-defined]
-
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import track_time_interval
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -59,8 +48,9 @@ from .const import (
     DT_NO_RECORD_ATTRS,
     NAME_PREFIX,
 )
-from .coordinator import GMDataUpdateCoordinator, GMIntegData
+from .coordinator import GMConfigEntry, GMDataUpdateCoordinator
 from .helpers import (
+    CFG_UNIQUE_IDS,
     ConfigID,
     LocationData,
     MiscData,
@@ -73,7 +63,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # the parent "device_tracker" have marked the schemas as legacy, so this
 # need to be refactored as part of a bigger rewrite.
-PLATFORM_SCHEMA = PLATFORM_SCHEMA_BASE.extend(
+PLATFORM_SCHEMA = DEVICE_TRACKER_PLATFORM_SCHEMA.extend(
     {
         vol.Required(CONF_USERNAME): cv.string,
         vol.Optional(CONF_MAX_GPS_ACCURACY, default=100000): vol.Coerce(float),
@@ -189,13 +179,12 @@ class GoogleMapsScanner:
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+    hass: HomeAssistant, entry: GMConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up the device tracker platform."""
     cid = cast(ConfigID, entry.entry_id)
-    gmi_data = cast(GMIntegData, hass.data[DOMAIN])
-    coordinator = gmi_data.coordinators[cid]
-    unique_ids = gmi_data.unique_ids
+    coordinator = entry.runtime_data
+    unique_ids = hass.data[CFG_UNIQUE_IDS]
 
     max_gps_accuracy = entry.options[CONF_MAX_GPS_ACCURACY]
     created_uids: set[UniqueID] = set()
@@ -257,6 +246,11 @@ class GoogleMapsDeviceTracker(
                 )
             ].original_name
             self._full_name = cast(str, self._attr_name).removeprefix(f"{NAME_PREFIX} ")
+        self._attr_device_info = DeviceInfo(  # type: ignore[assignment]
+            identifiers={(DOMAIN, uid)},
+            name=self._full_name,
+            serial_number=uid,
+        )
 
     @property
     def suggested_object_id(self) -> str:
@@ -275,17 +269,6 @@ class GoogleMapsDeviceTracker(
             attrs[ATTR_ADDRESS] = self._loc.address
             attrs[ATTR_LAST_SEEN] = dt_util.as_local(self._loc.last_seen)
         return dict(sorted(attrs.items()))
-
-    @property
-    def device_info(self) -> DeviceInfo | None:
-        """Return device specific attributes."""
-        info = DeviceInfo(
-            identifiers={(DOMAIN, cast(str, self.unique_id))},
-            name=self._full_name,
-        )
-        if (STORAGE_VERSION_MAJOR, STORAGE_VERSION_MINOR) >= (1, 4):
-            info["serial_number"] = self.unique_id
-        return info
 
     @property
     def entity_picture(self) -> str | None:
@@ -312,7 +295,7 @@ class GoogleMapsDeviceTracker(
         return self._misc.battery_level
 
     @property
-    def source_type(self) -> SourceType | str:
+    def source_type(self) -> SourceType:
         """Return the source type of the device."""
         return SourceType.GPS
 

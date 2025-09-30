@@ -1,29 +1,23 @@
 """Google Maps binary sensor."""
 from __future__ import annotations
 
-from typing import cast
-
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import ATTRIBUTION, DOMAIN, NAME_PREFIX
-from .coordinator import GMDataUpdateCoordinator, GMIntegData
-from .helpers import ConfigID
+from .const import ATTRIBUTION, NAME_PREFIX
+from .coordinator import GMConfigEntry, GMDataUpdateCoordinator
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+    hass: HomeAssistant, entry: GMConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up the binary sensor platform."""
-    cid = cast(ConfigID, entry.entry_id)
-    gmi_data = cast(GMIntegData, hass.data[DOMAIN])
-    coordinator = gmi_data.coordinators[cid]
+    coordinator = entry.runtime_data
 
     async_add_entities([GoogleMapsBinarySensor(coordinator)])
 
