@@ -2,13 +2,14 @@
 
 This is a custom version of the Home Assistant built-in [Google Maps](https://www.home-assistant.io/integrations/google_maps/) integration.
 
+> IMPORTANT: Before using this custom integration, all "legacy" YAML configuration entries and associated entries in `known_devices.yaml` must be [removed](#removing-legacy-trackers).
+
 The main new features are:
 
 <details>
 <summary>Entity-Based Instead of Legacy</summary>
 
 The built-in integration is still what is referred to as a "legacy" tracker.
-The entities it creates are customized via [`known_devices.yaml`](https://www.home-assistant.io/integrations/device_tracker#known_devicesyaml).
 
 This custom integration is now "Entity-based".
 The entities it creates are managed in the Entity Registry, just like with most newer integrations.
@@ -19,14 +20,7 @@ This allows the user to change the entity's name, ID, associated area, etc., as 
 <details>
 <summary>UI-Based Configuration</summary>
 
-The integration can now be set up via the UI.
-YAML-based configuration is still supported but deprecated.
-
-Entities created via the UI do not conflict with any existing "legacy" entities previously created by the built-in integration.
-The legacy entity IDs use serial numbers or email addresses, whereas the newer IDs use full names.
-Therefore, it is possible to continue using the legacy entities even after new ones are created via the UI.
-Once you are satisfied the new ones work, and have adjusted your system to use the new IDs,
-you can [remove](#removing-legacy-trackers) the legacy entities.
+The integration can now only be set up via the UI.
 
 </details>
 
@@ -357,10 +351,10 @@ might resolve the problem.
 
 ## Removing Legacy Trackers
 
-If/when any "legacy" trackers are no longer desired, they can be removed from the system by:
+"Legacy" trackers should be removed from the system by:
 
 1. Removing associated YAML configuration entry or entries.
-2. Removing associated entries in `known_devices.yaml`.
+2. Removing associated entries in [`known_devices.yaml`](https://www.home-assistant.io/integrations/device_tracker#known_devicesyaml).
 If that would make the file empty, then the file can simply be deleted instead.
 3. Restarting Home Assistant.
 
