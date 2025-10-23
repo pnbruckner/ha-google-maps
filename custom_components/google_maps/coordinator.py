@@ -140,7 +140,7 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
                 self._api.cookies_changed
                 and (
                     shutting_down
-                    or dt_util.utcnow() - self._cookies_last_synced  # noqa: F821
+                    or dt_util.utcnow() - self._cookies_last_synced
                     >= timedelta(minutes=15)
                 )
             ):

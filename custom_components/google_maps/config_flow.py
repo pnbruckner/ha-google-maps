@@ -8,12 +8,13 @@ from datetime import datetime
 import logging
 from os import PathLike
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import voluptuous as vol
 
 from homeassistant.components.file_upload import process_uploaded_file
 from homeassistant.config_entries import (
+    ConfigEntry,
     ConfigEntryBaseFlow,
     ConfigFlow,
     ConfigFlowResult,
@@ -354,7 +355,7 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry: GMConfigEntry) -> GoogleMapsOptionsFlow:
+    def async_get_options_flow(config_entry: ConfigEntry) -> GoogleMapsOptionsFlow:
         """Get the options flow for this handler."""
         return GoogleMapsOptionsFlow(config_entry)
 
@@ -427,9 +428,9 @@ class GoogleMapsOptionsFlow(OptionsFlowWithConfigEntry, GoogleMapsFlow):
     _update_cookies = False
 
     @property
-    def config_entry(self) -> GMConfigEntry:
+    def gm_config_entry(self) -> GMConfigEntry:
         """Return the config entry linked to the current options flow."""
-        return super().config_entry
+        return cast(GMConfigEntry, super().config_entry)
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -441,13 +442,13 @@ class GoogleMapsOptionsFlow(OptionsFlowWithConfigEntry, GoogleMapsFlow):
                 return await self.async_step_cookies()
             return await self.async_step_account_entity()
 
-        self._username = self.config_entry.data[CONF_USERNAME]
+        self._username = self.gm_config_entry.data[CONF_USERNAME]
         cf_path = cookies_file_path(
-            self.hass, self.config_entry.options[CONF_COOKIES_FILE]
+            self.hass, self.gm_config_entry.options[CONF_COOKIES_FILE]
         )
         self._api = GMLocSharing(self._username)
-        if hasattr(self.config_entry, "runtime_data"):
-            lock = self.config_entry.runtime_data.cookie_lock
+        if hasattr(self.gm_config_entry, "runtime_data"):
+            lock = self.gm_config_entry.runtime_data.cookie_lock
         else:
             lock = Lock()
         async with lock:
