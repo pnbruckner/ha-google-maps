@@ -6,44 +6,23 @@ from copy import copy
 import logging
 from typing import Any, cast
 
-from locationsharinglib import Service
-from locationsharinglib.locationsharinglibexceptions import (
-    InvalidCookies as lsl_InvalidCookies,
-)
-import voluptuous as vol
-
-from homeassistant.components.device_tracker import (
-    DOMAIN as DT_DOMAIN,
-    PLATFORM_SCHEMA as DEVICE_TRACKER_PLATFORM_SCHEMA,
-    SeeCallback,
-    SourceType,
-)
+from homeassistant.components.device_tracker import DOMAIN as DT_DOMAIN, SourceType
 from homeassistant.components.device_tracker.config_entry import TrackerEntity
-from homeassistant.const import (
-    ATTR_BATTERY_CHARGING,
-    ATTR_BATTERY_LEVEL,
-    ATTR_ID,
-    CONF_SCAN_INTERVAL,
-    CONF_USERNAME,
-)
+from homeassistant.const import ATTR_BATTERY_CHARGING
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import config_validation as cv, entity_registry as er
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import track_time_interval
 from homeassistant.helpers.restore_state import RestoreEntity
-from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util, slugify
 
 from .const import (
     ATTR_ADDRESS,
-    ATTR_FULL_NAME,
     ATTR_LAST_SEEN,
     ATTR_NICKNAME,
     ATTRIBUTION,
     CONF_MAX_GPS_ACCURACY,
-    DEF_SCAN_INTERVAL,
     DOMAIN,
     DT_NO_RECORD_ATTRS,
     NAME_PREFIX,
@@ -56,126 +35,9 @@ from .helpers import (
     MiscData,
     PersonData,
     UniqueID,
-    old_cookies_file_path,
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-# the parent "device_tracker" have marked the schemas as legacy, so this
-# need to be refactored as part of a bigger rewrite.
-PLATFORM_SCHEMA = DEVICE_TRACKER_PLATFORM_SCHEMA.extend(
-    {
-        vol.Required(CONF_USERNAME): cv.string,
-        vol.Optional(CONF_MAX_GPS_ACCURACY, default=100000): vol.Coerce(float),
-    }
-)
-
-
-def setup_scanner(
-    hass: HomeAssistant,
-    config: ConfigType,
-    see: SeeCallback,
-    discovery_info: DiscoveryInfoType | None = None,
-) -> bool:
-    """Set up the Google Maps Location sharing scanner."""
-    _LOGGER.warning(
-        "%s under %s is deprecated, please remove it from your configuration"
-        " and any associated entries in known_devices.yaml"
-        " and add via UI instead",
-        DOMAIN,
-        DT_DOMAIN,
-    )
-    scanner = GoogleMapsScanner(hass, config, see)
-    return scanner.success_init
-
-
-class GoogleMapsScanner:
-    """Representation of an Google Maps location sharing account."""
-
-    def __init__(
-        self, hass: HomeAssistant, config: ConfigType, see: SeeCallback
-    ) -> None:
-        """Initialize the scanner."""
-        self.see = see
-        self.username = config[CONF_USERNAME]
-        self.max_gps_accuracy = config[CONF_MAX_GPS_ACCURACY]
-        self.scan_interval = config.get(CONF_SCAN_INTERVAL) or DEF_SCAN_INTERVAL
-        self._prev_seen: dict[str, str] = {}
-
-        credfile = str(old_cookies_file_path(hass, self.username))
-        try:
-            self.service = Service(credfile, self.username)
-            self._update_info()  # type: ignore[no-untyped-call]
-
-            track_time_interval(hass, self._update_info, self.scan_interval)
-
-            self.success_init = True
-
-        except lsl_InvalidCookies:
-            _LOGGER.error(
-                "The cookie file provided does not provide a valid session. Please"
-                " create another one and try again"
-            )
-            self.success_init = False
-
-    def _update_info(self, now=None):  # type: ignore[no-untyped-def]
-        for person in self.service.get_all_people():
-            try:
-                dev_id = f"google_maps_{slugify(person.id)}"
-            except TypeError:
-                _LOGGER.warning("No location(s) shared with this account")
-                return
-
-            if (
-                self.max_gps_accuracy is not None
-                and person.accuracy > self.max_gps_accuracy
-            ):
-                _LOGGER.info(
-                    (
-                        "Ignoring %s update because expected GPS "
-                        "accuracy %s is not met: %s"
-                    ),
-                    person.nickname,
-                    self.max_gps_accuracy,
-                    person.accuracy,
-                )
-                continue
-
-            last_seen = dt_util.as_utc(person.datetime)
-            if last_seen < self._prev_seen.get(dev_id, last_seen):  # type: ignore[operator]
-                _LOGGER.debug(
-                    "Ignoring %s update because timestamp is older than last timestamp",
-                    person.nickname,
-                )
-                _LOGGER.debug("%s < %s", last_seen, self._prev_seen[dev_id])
-                continue
-            if last_seen == self._prev_seen.get(dev_id):
-                _LOGGER.debug(
-                    "Ignoring %s update because timestamp "
-                    "is the same as the last timestamp %s",
-                    person.nickname,
-                    last_seen,
-                )
-                continue
-            self._prev_seen[dev_id] = last_seen  # type: ignore[assignment]
-
-            attrs = {
-                ATTR_ADDRESS: person.address,
-                ATTR_FULL_NAME: person.full_name,
-                ATTR_ID: person.id,
-                ATTR_LAST_SEEN: last_seen,
-                ATTR_NICKNAME: person.nickname,
-                ATTR_BATTERY_CHARGING: person.charging,
-                ATTR_BATTERY_LEVEL: person.battery_level,
-            }
-            self.see(
-                dev_id=dev_id,
-                gps=(person.latitude, person.longitude),
-                picture=person.picture_url,
-                source_type=SourceType.GPS,
-                gps_accuracy=person.accuracy,
-                attributes=attrs,
-            )
 
 
 async def async_setup_entry(
