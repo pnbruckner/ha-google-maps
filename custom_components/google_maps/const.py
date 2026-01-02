@@ -5,7 +5,6 @@ from homeassistant.const import ATTR_ENTITY_PICTURE
 
 DOMAIN = "google_maps"
 ATTRIBUTION = "Data from Google Maps"
-NAME_PREFIX = "Google Maps"
 
 CREDENTIALS_FILE = ".google_maps_location_sharing.cookies"
 
@@ -14,7 +13,6 @@ DEF_SCAN_INTERVAL = timedelta(seconds=DEF_SCAN_INTERVAL_SEC)
 COOKIE_WARNING_PERIOD = timedelta(weeks=4)
 
 ATTR_ADDRESS = "address"
-ATTR_FULL_NAME = "full_name"
 ATTR_LAST_SEEN = "last_seen"
 ATTR_NICKNAME = "nickname"
 

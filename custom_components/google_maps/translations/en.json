@@ -4,6 +4,7 @@
             "reauth_successful": "Re-authentication was successful"
         },
         "error": {
+            "already_configured_account": "Account is already configured",
             "invalid_cookies_file": "Invalid cookies file."
         },
         "step": {
@@ -86,8 +87,14 @@
         }
     },
     "entity": {
+        "binary_sensor": {
+            "online": {
+                "name": "Google Maps {title} online"
+            }
+        },
         "device_tracker": {
             "tracker": {
+                "name": "Google Maps {full_name}",
                 "state_attributes": {
                     "address": {
                         "name": "Address"
@@ -106,6 +113,10 @@
         }
     },
     "issues": {
+        "duplicate_usernames": {
+            "description": "{usernames} used in multiple integration entries which is no longer allowed.\n\nAny integration entry that shared a username with other entries will have failed to load. To fix, [click here](/config/integrations/integration/google_maps), remove all but one integration entry for each username, then reload failed entries.",
+            "title": "Duplicate Usernames"
+        },
         "expiring_soon": {
             "description": "Cookies for {username} are expiring soon.\n\nTo fix, [click here](/config/integrations/integration/google_maps#config_entry={entry_id}) then click CONFIGURE and upload new cookies.",
             "title": "Google Maps Cookies Expiring Soon"

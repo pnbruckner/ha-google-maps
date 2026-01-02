@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from asyncio import Lock
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 import logging
 from pathlib import Path
@@ -15,12 +16,8 @@ from homeassistant.const import (
 )
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_point_in_utc_time
-from homeassistant.helpers.issue_registry import (
-    IssueSeverity,
-    async_create_issue,
-    async_delete_issue,
-)
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -67,11 +64,14 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
             EVENT_HOMEASSISTANT_FINAL_WRITE, self._save_cookies_if_changed
         )
 
-        scan_interval = timedelta(seconds=entry.options[CONF_SCAN_INTERVAL])
-        super().__init__(hass, _LOGGER, name=entry.title, update_interval=scan_interval)
-        # always_update added in 2023.9.0b0.
-        if hasattr(self, "always_update"):
-            self.always_update = False
+        super().__init__(
+            hass,
+            _LOGGER,
+            config_entry=entry,
+            name=entry.title,
+            update_interval=timedelta(seconds=entry.options[CONF_SCAN_INTERVAL]),
+            always_update=False,
+        )
 
     async def async_shutdown(self) -> None:
         """Cancel listeners, save cookies & close API."""
@@ -123,7 +123,9 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
             except (RequestFailed, InvalidData) as err:
                 raise UpdateFailed(f"{err.__class__.__name__}: {err}") from err
 
-        await self.hass.async_create_task(self._save_cookies_if_changed())
+        await self.config_entry.async_create_task(
+            self.hass, self._save_cookies_if_changed(), "Save cookies if changed"
+        )
         return {
             UniqueID(person.id): PersonData.from_person(person) for person in people
         }
@@ -162,7 +164,7 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
         if expiring_soon(cookies_expiration):
             self._create_issue()
         else:
-            async_delete_issue(self.hass, DOMAIN, self._cid)
+            ir.async_delete_issue(self.hass, DOMAIN, self._cid)
             if cookies_expiration and not shutting_down:
                 self._unsub_expiration()
                 self._unsub_exp = async_track_point_in_utc_time(
@@ -174,13 +176,12 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
     @callback
     def _create_issue(self, _utcnow: datetime | None = None) -> None:
         """Create repair issue for cookies which are expiring soon."""
-        async_create_issue(
+        ir.async_create_issue(
             self.hass,
             DOMAIN,
             self._cid,
             is_fixable=False,
-            is_persistent=False,
-            severity=IssueSeverity.WARNING,
+            severity=ir.IssueSeverity.WARNING,
             translation_key="expiring_soon",
             translation_placeholders={
                 "entry_id": self._cid,
@@ -189,4 +190,12 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
         )
 
 
-type GMConfigEntry = ConfigEntry[GMDataUpdateCoordinator]
+@dataclass
+class GMConfigEntryParams:
+    """Google Maps Config Entry Parameters."""
+
+    coordinator: GMDataUpdateCoordinator
+    setup_with_acct_entity: bool
+
+
+GMConfigEntry = ConfigEntry[GMConfigEntryParams]

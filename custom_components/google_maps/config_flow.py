@@ -4,12 +4,14 @@ from __future__ import annotations
 from abc import abstractmethod
 from asyncio import Lock
 from collections.abc import Mapping
+from copy import deepcopy
 from datetime import datetime
 import logging
 from os import PathLike
 from pathlib import Path
 from typing import Any, cast
 
+from propcache.api import cached_property
 import voluptuous as vol
 
 from homeassistant.components.file_upload import process_uploaded_file
@@ -18,7 +20,7 @@ from homeassistant.config_entries import (
     ConfigEntryBaseFlow,
     ConfigFlow,
     ConfigFlowResult,
-    OptionsFlowWithConfigEntry,
+    OptionsFlow,
 )
 from homeassistant.const import CONF_SCAN_INTERVAL, CONF_USERNAME
 from homeassistant.core import callback
@@ -65,17 +67,14 @@ _GMSERVICE_ERRORS = (InvalidCookies, InvalidCookiesFile, InvalidData, RequestFai
 class GoogleMapsFlow(ConfigEntryBaseFlow):
     """Google Maps flow mixin."""
 
+    options: dict[str, Any]
+
     _username: str
     _api: GMLocSharing
     _expiration: datetime | None
     _cf_path: Path | None = None
     # The following is only used in the reauth flow.
     _reauth_entry: GMConfigEntry | None = None
-
-    @property
-    @abstractmethod
-    def options(self) -> dict[str, Any]:
-        """Return mutable copy of options."""
 
     def _cookies_file_ok(self, cookies_file: str | PathLike) -> bool:
         """Determine if cookies in file are ok.
@@ -351,28 +350,30 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
 
     VERSION = 2
 
-    _options: dict[str, Any]
-
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> GoogleMapsOptionsFlow:
         """Get the options flow for this handler."""
         return GoogleMapsOptionsFlow(config_entry)
 
-    @property
-    def options(self) -> dict[str, Any]:
-        """Return mutable copy of options."""
-        return self._options
-
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Start user config flow."""
+        errors = {}
+
         if user_input is not None:
-            self._username = user_input[CONF_USERNAME]
-            self._api = GMLocSharing(self._username)
-            self._options = {}
-            return await self.async_step_cookies()
+            username = user_input[CONF_USERNAME]
+            # Make sure usernames (i.e., accounts) are unique.
+            if not any(
+                cfg.data[CONF_USERNAME] == username
+                for cfg in self.hass.config_entries.async_entries(DOMAIN)
+            ):
+                self._username = username
+                self._api = GMLocSharing(self._username)
+                self.options = {}
+                return await self.async_step_cookies()
+            errors[CONF_USERNAME] = "already_configured_account"
 
         data_schema = vol.Schema(
             {
@@ -382,7 +383,7 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
             }
         )
         return self.async_show_form(
-            step_id="user", data_schema=data_schema, last_step=False
+            step_id="user", data_schema=data_schema, errors=errors, last_step=False
         )
 
     async def async_step_reauth(self, data: Mapping[str, Any]) -> ConfigFlowResult:
@@ -393,7 +394,7 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
             self.context["entry_id"]
         )
         assert self._reauth_entry
-        self._options = dict(self._reauth_entry.options)
+        self.options = deepcopy(dict(self._reauth_entry.options))
         return await self.async_step_cookies()
 
     async def async_step_done(
@@ -422,12 +423,16 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
         return self.async_abort(reason="reauth_successful")
 
 
-class GoogleMapsOptionsFlow(OptionsFlowWithConfigEntry, GoogleMapsFlow):
+class GoogleMapsOptionsFlow(OptionsFlow, GoogleMapsFlow):
     """Google Maps options flow."""
 
     _update_cookies = False
 
-    @property
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        """Initialize flow."""
+        self.options = deepcopy(dict(config_entry.options))
+
+    @cached_property
     def gm_config_entry(self) -> GMConfigEntry:
         """Return the config entry linked to the current options flow."""
         return cast(GMConfigEntry, super().config_entry)
@@ -448,7 +453,7 @@ class GoogleMapsOptionsFlow(OptionsFlowWithConfigEntry, GoogleMapsFlow):
         )
         self._api = GMLocSharing(self._username)
         if hasattr(self.gm_config_entry, "runtime_data"):
-            lock = self.gm_config_entry.runtime_data.cookie_lock
+            lock = self.gm_config_entry.runtime_data.coordinator.cookie_lock
         else:
             lock = Lock()
         async with lock:
