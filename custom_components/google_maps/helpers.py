@@ -179,10 +179,9 @@ class ConfigUniqueIDs:
     Since multiple Google accounts might be added, and it's possible for people to have
     shared their location with more than one of those accounts, to avoid having the same
     Entity being created by more than one account (i.e., ConfigEntry), keep a record of
-    which config each entity is, or will be, associated with. This will not only avoid
-    having to keep querying the Entity Registry, it will also avoid race conditions
-    where multiple configs might try to create an Entity for the same shared person at
-    the same time.
+    which config each entity is associated with. This will not only avoid having to keep
+    querying the Entity Registry, it will also avoid race conditions where multiple
+    configs might try to create an Entity for the same shared person at the same time.
 
     Do not consider disabled config entries. Any entity registered with a disabled
     config entry will be "up for grabs" and can be "taken" by another, enabled config

@@ -4,7 +4,7 @@
             "reauth_successful": "Re-authentication was successful"
         },
         "error": {
-            "already_configured_account": "Account is already configured",
+            "already_configured": "Account is already configured",
             "invalid_cookies_file": "Invalid cookies file."
         },
         "step": {
@@ -77,7 +77,7 @@
                 },
                 "title": "Uploaded Cookies"
             },
-            "user": {
+            "username": {
                 "data": {
                     "username": "Username"
                 },
@@ -114,7 +114,7 @@
     },
     "issues": {
         "duplicate_usernames": {
-            "description": "{usernames} used in multiple integration entries which is no longer allowed.\n\nAny integration entry that shared a username with other entries will have failed to load. To fix, [click here](/config/integrations/integration/google_maps), remove all but one integration entry for each username, then reload failed entries.",
+            "description": "{usernames} used in multiple integration entries which is no longer allowed.\n\nTo fix, [click here](/config/integrations/integration/google_maps), remove all but one integration entry for each username, then restart Home Assistant.",
             "title": "Duplicate Usernames"
         },
         "expiring_soon": {

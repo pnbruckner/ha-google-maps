@@ -3,11 +3,12 @@ from __future__ import annotations
 
 from functools import partial
 import logging
+from typing import cast
 
 from homeassistant.components.device_tracker import DOMAIN as DT_DOMAIN
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryError
 from homeassistant.helpers import (
     config_validation as cv,
     device_registry as dr,
@@ -22,6 +23,7 @@ from .helpers import (
     CFG_UNIQUE_IDS,
     ConfigID,
     ConfigUniqueIDs,
+    UniqueID,
     cookies_file_path,
     dev_ids,
 )
@@ -33,10 +35,13 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 def _duplicate_usernames(hass: HomeAssistant) -> list[str]:
-    """Check configs for duplicate usernames."""
-    username_cfgs: dict[str, list[GMConfigEntry]] = {}
+    """Return duplicate usernames in config entries."""
+    username_cfgs: dict[str, list[ConfigEntry]] = {}
     for cfg in hass.config_entries.async_entries(DOMAIN):
-        username_cfgs.setdefault(cfg.data[CONF_USERNAME], []).append(cfg)
+        username_cfgs.setdefault(
+            cast(str, cfg.data[CONF_USERNAME] if cfg.version < 3 else cfg.unique_id),
+            [],
+        ).append(cfg)
     return [username for username, cfgs in username_cfgs.items() if len(cfgs) > 1]
 
 
@@ -46,8 +51,8 @@ async def async_setup(hass: HomeAssistant, _: ConfigType) -> bool:
     # entry with the same username. This is no longer allowed.
     #
     # If the user had created multiple entries that shared the same username while using
-    # a previous integration version, warn them via a repair issue that they need to
-    # remove all but one entry per username.
+    # a previous integration version, create a repair issue that tells user they need to
+    # remove all but one entry per username and abort setup (until user fixes problem.)
     if duplicate_usernames := sorted(_duplicate_usernames(hass)):
         ir.async_create_issue(
             hass,
@@ -61,48 +66,42 @@ async def async_setup(hass: HomeAssistant, _: ConfigType) -> bool:
             translation_key="duplicate_usernames",
             translation_placeholders={"usernames": ", ".join(duplicate_usernames)},
         )
+        return False
 
     hass.data[CFG_UNIQUE_IDS] = ConfigUniqueIDs(hass)
     return True
 
 
-async def async_migrate_entry(hass: HomeAssistant, entry: GMConfigEntry) -> bool:
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Migrate config entry."""
     _LOGGER.warning("%s: Migrating from version %s", entry.title, entry.version)
 
-    if entry.version > 2:
+    if entry.version > 3:
         # Can't downgrade from some unknown future version.
         return False
 
-    if entry.version == 1:
-        data = dict(entry.data)
-        options = dict(entry.options)
-        options[CONF_COOKIES_FILE] = data.pop(CONF_COOKIES_FILE)
-        hass.config_entries.async_update_entry(
-            entry, data=data, options=options, version=2
-        )
+    data = dict(entry.data)
+    options = dict(entry.options)
+    unique_id = entry.unique_id
 
+    if entry.version == 1:
+        options[CONF_COOKIES_FILE] = data.pop(CONF_COOKIES_FILE)
+
+    if entry.version <= 2:
+        unique_id = cast(str, data.pop(CONF_USERNAME))
+        # TODO: Put CONF_COOKIES_FILE back in data (to support reconfig flow)???
+
+    hass.config_entries.async_update_entry(
+        entry, data=data, options=options, unique_id=unique_id, version=3
+    )
     _LOGGER.warning(
         "%s: Migration to version %s successful", entry.title, entry.version
     )
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: GMConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up config entry."""
-    # Per the comment in async_setup, multiple config entries using the same username is
-    # no longer allowed. However, if the user had created this situation with an older
-    # integration version, refuse to setup any config entries that share a username with
-    # other entries.
-    if (username := entry.data[CONF_USERNAME]) in _duplicate_usernames(hass):
-        # Normally unique IDs would be released when the config entry is unloaded.
-        # However, since this one is failing to load, release any it might have owned
-        # per the Entity Registry.
-        hass.data[CFG_UNIQUE_IDS].release_all(ConfigID(entry.entry_id))
-        raise ConfigEntryError(
-            f"Username {username} used by multiple integration entries"
-        )
-
     coordinator = GMDataUpdateCoordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = GMConfigEntryParams(
@@ -112,7 +111,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: GMConfigEntry) -> bool:
     # TODO: After dropping support for HA versions before 2025.8, entry_updated can be
     #       removed if GoogleMapsOptionsFlow is based on OptionsFlowWithReload instead
     #       of OptionsFlow.
-    async def entry_updated(hass: HomeAssistant, entry: GMConfigEntry) -> None:
+    async def entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
         """Handle config entry update."""
         await hass.config_entries.async_reload(entry.entry_id)
 
@@ -125,30 +124,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: GMConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: GMConfigEntry) -> bool:
     """Unload a config entry."""
     result = await hass.config_entries.async_unload_platforms(entry, _PLATFORMS)
-    # Clean up entity & device registry entries for "account entity" if config entry was
-    # setup with that option enabled but it is no longer enabled (i.e., this option was
-    # just turned off by user, causing the config entry to be reloaded.)
-    if (
+
+    if entry.disabled_by:
+        # Entry was just disabled.
+        # Release all the unique IDs that were "owned" by this config entry.
+        hass.data[CFG_UNIQUE_IDS].release_all(ConfigID(entry.entry_id))
+    elif (
         entry.runtime_data.setup_with_acct_entity
         and not entry.options[CONF_CREATE_ACCT_ENTITY]
     ):
-        # This shouldn't be able to happen if the config entry is now disabled.
-        # I.e., if it's getting unloaded due to being disabled, it can't also have had
-        # its options changed.
-        assert not entry.disabled_by
+        # The "account entity" option was enabled when the entry was setup but it is not
+        # now. This must be because the user just changed that option, causing the entry
+        # to be reloaded. Since the option is no longer enabled, clean up the entity &
+        # device registry entries that were created for it.
 
-        username = entry.data[CONF_USERNAME]
+        # The "account" entity's unique ID is the config entry's username, aka the
+        # account's email address, which is also the config entry's unique ID.
+        uid = UniqueID(cast(str, entry.unique_id))
+
         ent_reg = er.async_get(hass)
-        if entity_id := ent_reg.async_get_entity_id(DT_DOMAIN, DOMAIN, username):
+        if entity_id := ent_reg.async_get_entity_id(DT_DOMAIN, DOMAIN, uid):
             ent_reg.async_remove(entity_id)
         dev_reg = dr.async_get(hass)
-        if device := dev_reg.async_get_device(dev_ids(username)):
+        if device := dev_reg.async_get_device(dev_ids(uid)):
             dev_reg.async_remove_device(device.id)
-    hass.data[CFG_UNIQUE_IDS].release_all(ConfigID(entry.entry_id))
+
     return result
 
 
-async def async_remove_entry(hass: HomeAssistant, entry: GMConfigEntry) -> None:
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Remove a config entry."""
     hass.async_add_executor_job(
         partial(

@@ -52,6 +52,7 @@ async def async_setup_entry(
     def update_entities() -> None:
         """Update entities for people."""
         uids = frozenset(coordinator.data)
+        # NOTE: Unique ID of "account entity" is the account's email address.
         if remove_uids := entities.keys() - uids:
             for remove_uid in remove_uids:
                 entity = entities.pop(remove_uid)
@@ -95,6 +96,7 @@ class GoogleMapsDeviceTracker(
     ) -> None:
         """Initialize Google Maps Device Tracker."""
         super().__init__(coordinator)
+        # NOTE: Unique ID of "account entity" is the account's email address.
         self._attr_unique_id = uid
         self._max_gps_accuracy = max_gps_accuracy
 

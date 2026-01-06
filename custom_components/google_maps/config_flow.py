@@ -16,6 +16,7 @@ import voluptuous as vol
 
 from homeassistant.components.file_upload import process_uploaded_file
 from homeassistant.config_entries import (
+    SOURCE_REAUTH,
     ConfigEntry,
     ConfigEntryBaseFlow,
     ConfigFlow,
@@ -67,14 +68,24 @@ _GMSERVICE_ERRORS = (InvalidCookies, InvalidCookiesFile, InvalidData, RequestFai
 class GoogleMapsFlow(ConfigEntryBaseFlow):
     """Google Maps flow mixin."""
 
-    options: dict[str, Any]
-
     _username: str
     _api: GMLocSharing
+    _options: dict[str, Any]
+
     _expiration: datetime | None
-    _cf_path: Path | None = None
-    # The following is only used in the reauth flow.
-    _reauth_entry: GMConfigEntry | None = None
+
+    @cached_property
+    def _is_reauth(self) -> bool:
+        """Return if this is a re-authentication config flow."""
+        return self.source == SOURCE_REAUTH
+
+    def _init_flow_params(
+        self, username: str, options: Mapping[str, Any] | None = None
+    ) -> None:
+        """Initialize flow parameters."""
+        self._username = username
+        self._api = GMLocSharing(username)
+        self._options = deepcopy(dict(options or {}))
 
     def _cookies_file_ok(self, cookies_file: str | PathLike) -> bool:
         """Determine if cookies in file are ok.
@@ -111,7 +122,7 @@ class GoogleMapsFlow(ConfigEntryBaseFlow):
 
     async def _save_new_cookies(self) -> None:
         """Save new cookies to newly named file."""
-        self.options[CONF_COOKIES_FILE] = cookies_file = random_uuid_hex()
+        self._options[CONF_COOKIES_FILE] = cookies_file = random_uuid_hex()
         await self.hass.async_add_executor_job(self._save_cookies, cookies_file)
 
     async def async_step_cookies(
@@ -121,17 +132,15 @@ class GoogleMapsFlow(ConfigEntryBaseFlow):
         if user_input is not None:
             if not user_input[_CONF_USE_EXISTING_COOKIES]:
                 return await self.async_step_get_cookies_procedure_menu()
-            if self._reauth_entry:
-                return await self.async_step_reauth_done()
+            if self._is_reauth:
+                return await self.async_step_done()
             return await self.async_step_account_entity()
 
-        self._cf_path = old_cookies_file_path(self.hass, self._username)
-        if not await self.hass.async_add_executor_job(self._cf_path.is_file):
+        cf_path = old_cookies_file_path(self.hass, self._username)
+        if not await self.hass.async_add_executor_job(cf_path.is_file):
             return await self.async_step_get_cookies_procedure_menu()
-        if not await self.hass.async_add_executor_job(
-            self._cookies_file_ok, self._cf_path
-        ):
-            return await self.async_step_old_cookies_invalid()
+        if not await self.hass.async_add_executor_job(self._cookies_file_ok, cf_path):
+            return await self.async_step_old_cookies_invalid(cf_path=cf_path)
 
         data_schema = vol.Schema(
             {vol.Required(_CONF_USE_EXISTING_COOKIES): BooleanSelector()}
@@ -144,25 +153,25 @@ class GoogleMapsFlow(ConfigEntryBaseFlow):
             data_schema=data_schema,
             description_placeholders={
                 "username": self._username,
-                "cookies_file": str(self._cf_path.name),
+                "cookies_file": str(cf_path.name),
                 "expiration": exp_2_str(self._expiration),
             },
             last_step=False,
         )
 
     async def async_step_old_cookies_invalid(
-        self, user_input: dict[str, Any] | None = None
+        self, user_input: dict[str, Any] | None = None, cf_path: Path | None = None
     ) -> ConfigFlowResult:
         """Upload a cookies file."""
         if user_input is not None:
             return await self.async_step_get_cookies_procedure_menu()
 
-        assert self._cf_path
+        assert cf_path
         return self.async_show_form(
             step_id="old_cookies_invalid",
             description_placeholders={
                 "username": self._username,
-                "cookies_file": str(self._cf_path.name),
+                "cookies_file": str(cf_path.name),
             },
             last_step=False,
         )
@@ -248,7 +257,7 @@ class GoogleMapsFlow(ConfigEntryBaseFlow):
     ) -> ConfigFlowResult:
         """Use uploaded cookie file or try again."""
         menu_options = [
-            "reauth_done" if self._reauth_entry else "account_entity",
+            "reauth_done" if self._is_reauth else "account_entity",
             "get_cookies_procedure_menu",
         ]
         return self.async_show_menu(
@@ -265,7 +274,7 @@ class GoogleMapsFlow(ConfigEntryBaseFlow):
     ) -> ConfigFlowResult:
         """Determine if entity should be created for account."""
         if user_input is not None:
-            self.options[CONF_CREATE_ACCT_ENTITY] = user_input[CONF_CREATE_ACCT_ENTITY]
+            self._options[CONF_CREATE_ACCT_ENTITY] = user_input[CONF_CREATE_ACCT_ENTITY]
             return await self.async_step_max_gps_accuracy()
 
         data_schema = vol.Schema(
@@ -273,7 +282,7 @@ class GoogleMapsFlow(ConfigEntryBaseFlow):
         )
         data_schema = self.add_suggested_values_to_schema(
             data_schema,
-            {CONF_CREATE_ACCT_ENTITY: self.options.get(CONF_CREATE_ACCT_ENTITY, True)},
+            {CONF_CREATE_ACCT_ENTITY: self._options.get(CONF_CREATE_ACCT_ENTITY, True)},
         )
         if doc := (await async_get_integration(self.hass, DOMAIN)).documentation:
             doc = (
@@ -294,7 +303,9 @@ class GoogleMapsFlow(ConfigEntryBaseFlow):
     ) -> ConfigFlowResult:
         """Get maximum GPS accuracy."""
         if user_input is not None:
-            self.options[CONF_MAX_GPS_ACCURACY] = int(user_input[CONF_MAX_GPS_ACCURACY])
+            self._options[CONF_MAX_GPS_ACCURACY] = int(
+                user_input[CONF_MAX_GPS_ACCURACY]
+            )
             return await self.async_step_update_period()
 
         data_schema = vol.Schema(
@@ -306,7 +317,7 @@ class GoogleMapsFlow(ConfigEntryBaseFlow):
         )
         data_schema = self.add_suggested_values_to_schema(
             data_schema,
-            {CONF_MAX_GPS_ACCURACY: self.options.get(CONF_MAX_GPS_ACCURACY, 1000)},
+            {CONF_MAX_GPS_ACCURACY: self._options.get(CONF_MAX_GPS_ACCURACY, 1000)},
         )
         return self.async_show_form(
             step_id="max_gps_accuracy", data_schema=data_schema, last_step=False
@@ -317,13 +328,13 @@ class GoogleMapsFlow(ConfigEntryBaseFlow):
     ) -> ConfigFlowResult:
         """Get update period."""
         if user_input is not None:
-            self.options[CONF_SCAN_INTERVAL] = int(
+            self._options[CONF_SCAN_INTERVAL] = int(
                 cv.time_period_dict(user_input[CONF_SCAN_INTERVAL]).total_seconds()
             )
             return await self.async_step_done()
 
         data_schema = vol.Schema({vol.Required(CONF_SCAN_INTERVAL): DurationSelector()})
-        default = self.options.get(CONF_SCAN_INTERVAL, DEF_SCAN_INTERVAL_SEC)
+        default = self._options.get(CONF_SCAN_INTERVAL, DEF_SCAN_INTERVAL_SEC)
         def_m, def_s = divmod(default, 60)
         def_h, def_m = divmod(def_m, 60)
         data_schema = self.add_suggested_values_to_schema(
@@ -338,42 +349,40 @@ class GoogleMapsFlow(ConfigEntryBaseFlow):
     ) -> ConfigFlowResult:
         """Finish the user config or options flow."""
 
-    async def async_step_reauth_done(
-        self, _: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Finish the reauthorization flow."""
-        raise NotImplementedError
-
 
 class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
     """Google Maps config flow."""
 
-    VERSION = 2
+    VERSION = 3
 
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> GoogleMapsOptionsFlow:
         """Get the options flow for this handler."""
-        return GoogleMapsOptionsFlow(config_entry)
+        return GoogleMapsOptionsFlow()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Start user config flow."""
-        errors = {}
+        return await self.async_step_username()
 
+    async def async_step_reauth(self, data: Mapping[str, Any]) -> ConfigFlowResult:
+        """Start reauthorization flow."""
+        assert self.unique_id
+        self._init_flow_params(self.unique_id, self._get_reauth_entry().options)
+        return await self.async_step_cookies()
+
+    async def async_step_username(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Get username."""
         if user_input is not None:
             username = user_input[CONF_USERNAME]
-            # Make sure usernames (i.e., accounts) are unique.
-            if not any(
-                cfg.data[CONF_USERNAME] == username
-                for cfg in self.hass.config_entries.async_entries(DOMAIN)
-            ):
-                self._username = username
-                self._api = GMLocSharing(self._username)
-                self.options = {}
-                return await self.async_step_cookies()
-            errors[CONF_USERNAME] = "already_configured_account"
+            await self.async_set_unique_id(username)
+            self._abort_if_unique_id_configured()
+            self._init_flow_params(username)
+            return await self.async_step_cookies()
 
         data_schema = vol.Schema(
             {
@@ -383,59 +392,34 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
             }
         )
         return self.async_show_form(
-            step_id="user", data_schema=data_schema, errors=errors, last_step=False
+            step_id="username", data_schema=data_schema, last_step=False
         )
-
-    async def async_step_reauth(self, data: Mapping[str, Any]) -> ConfigFlowResult:
-        """Start reauthorization flow."""
-        self._username = data[CONF_USERNAME]
-        self._api = GMLocSharing(self._username)
-        self._reauth_entry = self.hass.config_entries.async_get_entry(
-            self.context["entry_id"]
-        )
-        assert self._reauth_entry
-        self.options = deepcopy(dict(self._reauth_entry.options))
-        return await self.async_step_cookies()
 
     async def async_step_done(
         self, _: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Finish the user config flow."""
+        """Finish the config flow."""
         # Save cookies.
         await self._save_new_cookies()
+
+        if self._is_reauth:
+            self.hass.config_entries.async_update_entry(
+                self._get_reauth_entry(), options=self._options
+            )
+            _LOGGER.debug("Reauthorization successful")
+            return self.async_abort(reason="reauth_successful")
+
         return self.async_create_entry(
             title=self._username,
-            data={CONF_USERNAME: self._username},
-            options=self.options,
+            data={},
+            options=self._options,
         )
-
-    async def async_step_reauth_done(
-        self, _: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Finish the reauthorization flow."""
-        # Save cookies.
-        await self._save_new_cookies()
-        assert self._reauth_entry
-        self.hass.config_entries.async_update_entry(
-            self._reauth_entry, options=self.options
-        )
-        _LOGGER.debug("Reauthorization successful")
-        return self.async_abort(reason="reauth_successful")
 
 
 class GoogleMapsOptionsFlow(OptionsFlow, GoogleMapsFlow):
     """Google Maps options flow."""
 
     _update_cookies = False
-
-    def __init__(self, config_entry: ConfigEntry) -> None:
-        """Initialize flow."""
-        self.options = deepcopy(dict(config_entry.options))
-
-    @cached_property
-    def gm_config_entry(self) -> GMConfigEntry:
-        """Return the config entry linked to the current options flow."""
-        return cast(GMConfigEntry, super().config_entry)
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -447,18 +431,21 @@ class GoogleMapsOptionsFlow(OptionsFlow, GoogleMapsFlow):
                 return await self.async_step_cookies()
             return await self.async_step_account_entity()
 
-        self._username = self.gm_config_entry.data[CONF_USERNAME]
-        cf_path = cookies_file_path(
-            self.hass, self.gm_config_entry.options[CONF_COOKIES_FILE]
-        )
-        self._api = GMLocSharing(self._username)
-        if hasattr(self.gm_config_entry, "runtime_data"):
-            lock = self.gm_config_entry.runtime_data.coordinator.cookie_lock
+        username = self.config_entry.unique_id
+        assert username
+        self._init_flow_params(username, self.config_entry.options)
+        if hasattr(self.config_entry, "runtime_data"):
+            lock = cast(
+                GMConfigEntry, self.config_entry
+            ).runtime_data.coordinator.cookie_lock
         else:
             lock = Lock()
         async with lock:
             file_ok = await self.hass.async_add_executor_job(
-                self._cookies_file_ok, cf_path
+                self._cookies_file_ok,
+                cookies_file_path(
+                    self.hass, self.config_entry.options[CONF_COOKIES_FILE]
+                ),
             )
         data_schema = vol.Schema(
             {vol.Required(_CONF_UPDATE_COOKIES): BooleanSelector()}
@@ -484,4 +471,4 @@ class GoogleMapsOptionsFlow(OptionsFlow, GoogleMapsFlow):
         if self._update_cookies:
             await self._save_new_cookies()
 
-        return self.async_create_entry(title="", data=self.options)
+        return self.async_create_entry(title="", data=self._options)

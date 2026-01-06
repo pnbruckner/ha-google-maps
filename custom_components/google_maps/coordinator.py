@@ -7,13 +7,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 import logging
 from pathlib import Path
+from typing import cast
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    CONF_SCAN_INTERVAL,
-    CONF_USERNAME,
-    EVENT_HOMEASSISTANT_FINAL_WRITE,
-)
+from homeassistant.const import CONF_SCAN_INTERVAL, EVENT_HOMEASSISTANT_FINAL_WRITE
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import issue_registry as ir
@@ -34,12 +31,17 @@ from .gm_loc_sharing import (
     InvalidData,
     RequestFailed,
 )
-from .helpers import ConfigID, PersonData, UniqueID, cookies_file_path, expiring_soon
+from .helpers import PersonData, UniqueID, cookies_file_path, expiring_soon
 
 _LOGGER = logging.getLogger(__name__)
 
 
 GMData = dict[UniqueID, PersonData]
+"""Google Maps data.
+
+Dictionary of unique ID -> PersonData.
+For "account entity", unique ID is the account's email address.
+"""
 
 
 class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
@@ -51,14 +53,13 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         """Initialize coordinator."""
-        self._cid = ConfigID(entry.entry_id)
-        self._username = entry.data[CONF_USERNAME]
         self._cookies_file = str(
             cookies_file_path(hass, entry.options[CONF_COOKIES_FILE])
         )
         self._create_acct_entity = entry.options[CONF_CREATE_ACCT_ENTITY]
 
-        self._api = GMLocSharing(self._username)
+        # The account's username is used as the config entry's unique ID.
+        self._api = GMLocSharing(cast(str, entry.unique_id))
         self.cookie_lock = Lock()
         self._unsub_final_write = hass.bus.async_listen_once(
             EVENT_HOMEASSISTANT_FINAL_WRITE, self._save_cookies_if_changed
@@ -113,7 +114,10 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
             self._cookies_file_synced()
 
     async def _async_update_data(self) -> GMData:
-        """Fetch the latest data from the source."""
+        """Fetch the latest data from the source.
+
+        If creating "account entity", its unique ID will be the account's email address.
+        """
         async with self.cookie_lock:
             try:
                 await self.hass.async_add_executor_job(self._api.get_new_data)
@@ -164,7 +168,7 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
         if expiring_soon(cookies_expiration):
             self._create_issue()
         else:
-            ir.async_delete_issue(self.hass, DOMAIN, self._cid)
+            ir.async_delete_issue(self.hass, DOMAIN, self.config_entry.entry_id)
             if cookies_expiration and not shutting_down:
                 self._unsub_expiration()
                 self._unsub_exp = async_track_point_in_utc_time(
@@ -179,13 +183,13 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
         ir.async_create_issue(
             self.hass,
             DOMAIN,
-            self._cid,
+            self.config_entry.entry_id,
             is_fixable=False,
             severity=ir.IssueSeverity.WARNING,
             translation_key="expiring_soon",
             translation_placeholders={
-                "entry_id": self._cid,
-                "username": self._username,
+                "entry_id": self.config_entry.entry_id,
+                "username": cast(str, self.config_entry.unique_id),
             },
         )
 
