@@ -3,11 +3,12 @@ from __future__ import annotations
 
 from asyncio import Lock
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import logging
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_SCAN_INTERVAL, EVENT_HOMEASSISTANT_FINAL_WRITE
@@ -199,7 +200,16 @@ class GMConfigEntryParams:
     """Google Maps Config Entry Parameters."""
 
     coordinator: GMDataUpdateCoordinator
-    setup_with_acct_entity: bool
+    setup_data: dict[str, Any]
+    setup_options: dict[str, Any]
+
+    def __init__(
+        self, coordinator: GMDataUpdateCoordinator, entry: ConfigEntry
+    ) -> None:
+        """Initialize."""
+        self.coordinator = coordinator
+        self.setup_data = deepcopy(dict(entry.data))
+        self.setup_options = deepcopy(dict(entry.options))
 
 
 GMConfigEntry = ConfigEntry[GMConfigEntryParams]

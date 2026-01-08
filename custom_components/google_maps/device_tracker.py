@@ -12,9 +12,8 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
-from homeassistant.helpers.typing import UNDEFINED
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.util import dt as dt_util, slugify
+from homeassistant.util import dt as dt_util
 
 from .const import (
     ATTR_ADDRESS,
@@ -85,6 +84,8 @@ class GoogleMapsDeviceTracker(
 
     _unrecorded_attributes = DT_NO_RECORD_ATTRS
     _attr_attribution = ATTRIBUTION
+    # With name == None and has_entity_name == True, entity will get device's name.
+    _attr_name = None
     _attr_has_entity_name = True
     _attr_translation_key = "tracker"
 
@@ -105,19 +106,14 @@ class GoogleMapsDeviceTracker(
         assert data.misc
         self._misc = copy(data.misc)
         full_name = data.misc.full_name
-        self._attr_translation_placeholders = {"full_name": full_name}
+        name = f"Google Maps {full_name}"
         # For some reason, the device_tracker component doesn't allow entity to be
         # associated with a device. This appears to be for some legacy reason that no
         # longer exists or makes sense. E.g., some built-in integrations assign device
         # info for device_tracker entities.
         self._attr_device_info = dr.DeviceInfo(  # type: ignore[assignment]
-            identifiers=dev_ids(uid), name=full_name, serial_number=uid
+            identifiers=dev_ids(uid), name=name, serial_number=uid
         )
-
-    @property
-    def suggested_object_id(self) -> str:
-        """Return input for object ID."""
-        return slugify(cast(str, self.name))
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any]:
@@ -176,17 +172,6 @@ class GoogleMapsDeviceTracker(
         """Return Google Maps specific state data to be restored."""
         # TODO: Still save/restore misc???
         return PersonData(self._loc, self._misc)
-
-    def _friendly_name_internal(self) -> str | None:
-        """Return the friendly name.
-
-        It does not make sense to use device name in front of entity name since device
-        name is effectively part of entity name since they both come from full name.
-        """
-        name = self.name
-        if name is UNDEFINED:
-            return None
-        return name
 
     async def async_added_to_hass(self) -> None:
         """Run when entity about to be added to hass."""

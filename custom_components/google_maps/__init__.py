@@ -104,9 +104,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up config entry."""
     coordinator = GMDataUpdateCoordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
-    entry.runtime_data = GMConfigEntryParams(
-        coordinator, entry.options[CONF_CREATE_ACCT_ENTITY]
-    )
+    entry.runtime_data = GMConfigEntryParams(coordinator, entry)
 
     # TODO: After dropping support for HA versions before 2025.8, entry_updated can be
     #       removed if GoogleMapsOptionsFlow is based on OptionsFlowWithReload instead
@@ -121,6 +119,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
+def _del_cookies_file(hass: HomeAssistant, cookies_file: str) -> None:
+    """Delete cookies file."""
+    hass.async_add_executor_job(
+        partial(cookies_file_path(hass, cookies_file).unlink, missing_ok=True)
+    )
+
+
 async def async_unload_entry(hass: HomeAssistant, entry: GMConfigEntry) -> bool:
     """Unload a config entry."""
     result = await hass.config_entries.async_unload_platforms(entry, _PLATFORMS)
@@ -129,36 +134,38 @@ async def async_unload_entry(hass: HomeAssistant, entry: GMConfigEntry) -> bool:
         # Entry was just disabled.
         # Release all the unique IDs that were "owned" by this config entry.
         hass.data[CFG_UNIQUE_IDS].release_all(ConfigID(entry.entry_id))
-    elif (
-        entry.runtime_data.setup_with_acct_entity
-        and not entry.options[CONF_CREATE_ACCT_ENTITY]
-    ):
-        # The "account entity" option was enabled when the entry was setup but it is not
-        # now. This must be because the user just changed that option, causing the entry
-        # to be reloaded. Since the option is no longer enabled, clean up the entity &
-        # device registry entries that were created for it.
+    else:
+        # Entry is being reloaded, possibly due to a reauthentication, reconfiguration,
+        # options update or a manual reload initiated by the user.
+        if (
+            not entry.options[CONF_CREATE_ACCT_ENTITY]
+            and entry.runtime_data.setup_options[CONF_CREATE_ACCT_ENTITY]
+        ):
+            # User turned off the "account entity" option. Clean up the entity & device
+            # registry entries that were created for it.
 
-        # The "account" entity's unique ID is the config entry's username, aka the
-        # account's email address, which is also the config entry's unique ID.
-        uid = UniqueID(cast(str, entry.unique_id))
+            # The "account" entity's unique ID is the config entry's username, aka the
+            # account's email address, which is also the config entry's unique ID.
+            uid = UniqueID(cast(str, entry.unique_id))
 
-        ent_reg = er.async_get(hass)
-        if entity_id := ent_reg.async_get_entity_id(DT_DOMAIN, DOMAIN, uid):
-            ent_reg.async_remove(entity_id)
-        dev_reg = dr.async_get(hass)
-        if device := dev_reg.async_get_device(dev_ids(uid)):
-            dev_reg.async_remove_device(device.id)
+            ent_reg = er.async_get(hass)
+            if entity_id := ent_reg.async_get_entity_id(DT_DOMAIN, DOMAIN, uid):
+                ent_reg.async_remove(entity_id)
+            dev_reg = dr.async_get(hass)
+            if device := dev_reg.async_get_device(dev_ids(uid)):
+                dev_reg.async_remove_device(device.id)
+
+        if entry.options[CONF_COOKIES_FILE] != (
+            cookies_file := entry.runtime_data.setup_options[CONF_COOKIES_FILE]
+        ):
+            # Cookies file has changed. Delete the old one.
+            _del_cookies_file(hass, cookies_file)
 
     return result
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Remove a config entry."""
-    hass.async_add_executor_job(
-        partial(
-            cookies_file_path(hass, entry.options[CONF_COOKIES_FILE]).unlink,
-            missing_ok=True,
-        )
-    )
+    _del_cookies_file(hass, entry.options[CONF_COOKIES_FILE])
     if not _duplicate_usernames(hass):
         ir.async_delete_issue(hass, DOMAIN, "duplicate_usernames")
