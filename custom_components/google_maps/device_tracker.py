@@ -1,16 +1,21 @@
 """Support for Google Maps location sharing."""
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from copy import copy
+from functools import partial
 import logging
 from typing import Any, cast
 
-from homeassistant.components.device_tracker.config_entry import TrackerEntity
+from homeassistant.components.device_tracker.config_entry import (
+    DOMAIN as DT_DOMAIN,
+    TrackerEntity,
+)
 from homeassistant.const import ATTR_BATTERY_CHARGING
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import device_registry as dr
+from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_entity_registry_updated_event
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
@@ -40,12 +45,80 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: GMConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up the device tracker platform."""
+    dev_reg = dr.async_get(hass)
+    ent_reg = er.async_get(hass)
+
     cid = ConfigID(entry.entry_id)
     coordinator = entry.runtime_data.coordinator
+    max_gps_accuracy = entry.options[CONF_MAX_GPS_ACCURACY]
     unique_ids = hass.data[CFG_UNIQUE_IDS]
 
-    max_gps_accuracy = entry.options[CONF_MAX_GPS_ACCURACY]
     entities: dict[UniqueID, GoogleMapsDeviceTracker] = {}
+    registered_entities: dict[str, UniqueID] = {
+        ent.entity_id: UniqueID(ent.unique_id)
+        for ent in er.async_entries_for_config_entry(ent_reg, cid)
+        if ent.domain == DT_DOMAIN
+    }
+    unsub_ent_reg_updates: CALLBACK_TYPE | None = None
+
+    def stop_tracking_ent_reg_updates() -> None:
+        """Stop tracking entity registry updates."""
+        nonlocal unsub_ent_reg_updates
+
+        if unsub_ent_reg_updates:
+            unsub_ent_reg_updates()
+            unsub_ent_reg_updates = None
+
+    def track_ent_reg_updates() -> None:
+        """Track entity registry updates."""
+        nonlocal unsub_ent_reg_updates
+
+        stop_tracking_ent_reg_updates()
+        assert not unsub_ent_reg_updates
+        if registered_entities:
+            unsub_ent_reg_updates = async_track_entity_registry_updated_event(
+                hass,
+                # Provide a copy of the current keys so tracking/removing is not
+                # affected by updates to the dict.
+                list(registered_entities),
+                entity_registry_updated,
+            )
+
+    # Needs to be a callback so it doesn't get run in an executor by
+    # async_track_entity_registry_updated_event.
+    @callback
+    def entity_registry_updated(
+        event: Event[er.EventEntityRegistryUpdatedData],
+    ) -> None:
+        """Handle entity removed from entity registry."""
+        if (action := event.data["action"]) not in ("remove", "update"):
+            return
+
+        entity_id = event.data["entity_id"]
+        if action == "remove":
+            uid = registered_entities.pop(entity_id)
+            track_ent_reg_updates()
+
+            device = dev_reg.async_get_device(dev_ids(uid))
+            if not device:
+                # TODO: Remove warning???
+                _LOGGER.warning(
+                    "Could not find device for removed entity: %s", entity_id
+                )
+                return
+            dev_reg.async_remove_device(device.id)
+
+        # update
+        elif old_entity_id := cast(str | None, event.data.get("old_entity_id")):
+            track_entity(registered_entities.pop(old_entity_id), entity_id)
+
+    def track_entity(uid: UniqueID, entity_id: str) -> None:
+        """Track entity registry updates for entity."""
+        if entity_id in registered_entities:
+            assert registered_entities[entity_id] == uid
+            return
+        registered_entities[entity_id] = uid
+        track_ent_reg_updates()
 
     @callback
     def update_entities() -> None:
@@ -67,14 +140,18 @@ async def async_setup_entry(
                 # added next time entry loads.
         if create_uids := unique_ids.take(cid, uids) - entities.keys():
             new_entities = {
-                uid: GoogleMapsDeviceTracker(coordinator, uid, max_gps_accuracy)
+                uid: GoogleMapsDeviceTracker(
+                    coordinator, uid, max_gps_accuracy, partial(track_entity, uid)
+                )
                 for uid in create_uids
             }
             async_add_entities(new_entities.values())
             entities.update(new_entities)
 
+    track_ent_reg_updates()
     update_entities()
     entry.async_on_unload(coordinator.async_add_listener(update_entities))
+    entry.async_on_unload(stop_tracking_ent_reg_updates)
 
 
 class GoogleMapsDeviceTracker(
@@ -93,7 +170,11 @@ class GoogleMapsDeviceTracker(
     _skip_reason: str = ""
 
     def __init__(
-        self, coordinator: GMDataUpdateCoordinator, uid: UniqueID, max_gps_accuracy: int
+        self,
+        coordinator: GMDataUpdateCoordinator,
+        uid: UniqueID,
+        max_gps_accuracy: int,
+        track_entity: Callable[[str], None],
     ) -> None:
         """Initialize Google Maps Device Tracker."""
         super().__init__(coordinator)
@@ -114,6 +195,7 @@ class GoogleMapsDeviceTracker(
         self._attr_device_info = dr.DeviceInfo(  # type: ignore[assignment]
             identifiers=dev_ids(uid), name=name, serial_number=uid
         )
+        self._track_entity = track_entity
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any]:
@@ -176,6 +258,8 @@ class GoogleMapsDeviceTracker(
     async def async_added_to_hass(self) -> None:
         """Run when entity about to be added to hass."""
         await super().async_added_to_hass()
+
+        self._track_entity(self.entity_id)
 
         # Restore state if possible.
         if (last_extra_data := await self.async_get_last_extra_data()) and (
