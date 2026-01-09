@@ -54,9 +54,7 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         """Initialize coordinator."""
-        self._cookies_file = str(
-            cookies_file_path(hass, entry.options[CONF_COOKIES_FILE])
-        )
+        self._cookies_file = str(cookies_file_path(hass, entry.data[CONF_COOKIES_FILE]))
         self._create_acct_entity = entry.options[CONF_CREATE_ACCT_ENTITY]
 
         # The account's username is used as the config entry's unique ID.
@@ -80,7 +78,7 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
         await super().async_shutdown()
         self._unsub_all()
         cur_cookies_file = str(
-            cookies_file_path(self.hass, self.config_entry.options[CONF_COOKIES_FILE])
+            cookies_file_path(self.hass, self.config_entry.data[CONF_COOKIES_FILE])
         )
         # Has cookies file name changed, e.g., due to reauth or user reconfiguration?
         # If not, save cookies to existing file. If so, delete file that was being used
@@ -88,7 +86,10 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
         if cur_cookies_file == self._cookies_file:
             await self._save_cookies_if_changed(shutting_down=True)
         else:
+            # TODO: Is this necessary, or even wise, since config entry unload & remove
+            #       do the same thing???
             await self.hass.async_add_executor_job(Path(self._cookies_file).unlink)
+        # TODO: Does close do I/O and need to be run in an executor???
         self._api.close()
 
     def _unsub_all(self) -> None:

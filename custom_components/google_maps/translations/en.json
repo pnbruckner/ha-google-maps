@@ -130,9 +130,6 @@
         }
     },
     "options": {
-        "error": {
-            "invalid_cookies_file": "Invalid cookies file."
-        },
         "step": {
             "account_entity": {
                 "data": {
@@ -141,49 +138,6 @@
                 "description": "Unlike trackers created for accounts that share their location with {username}, the tracker created for the {username} account holder will be missing some data.\n\nSee {doc} for more information.\n\nShould a tracker be created for the {username} account holder?",
                 "title": "Account Tracker Entity"
             },
-            "chrome": {
-                "description": "{procedure}",
-                "title": "Get Cookies Using Google Chrome"
-            },
-            "get_cookies": {
-                "data": {
-                    "use_existing_cookies": "Use existing cookies file"
-                },
-                "description": "Use existing cookies file for {username}?\n\nFound with expiraton of {expiration}:\n\n{cookies_file}",
-                "title": "Use Existing Cookies File"
-            },
-            "cookies_upload": {
-                "data": {
-                    "cookies": "Cookies file"
-                },
-                "description": "Upload cookies file for {username}.",
-                "title": "Upload Cookies File"
-            },
-            "edge": {
-                "description": "{procedure}",
-                "title": "Get Cookies Using Microsoft Edge"
-            },
-            "firefox": {
-                "description": "{procedure}",
-                "title": "Get Cookies Using Mozilla Firefox"
-            },
-            "get_cookies_procedure_menu": {
-                "description": "Choose browser type for detailed instructions on how to get a cookies file.",
-                "menu_options": {
-                    "chrome": "Google Chrome",
-                    "cookies_upload": "Continue straight to uploading a file",
-                    "edge": "Microsoft Edge",
-                    "firefox": "Mozilla Firefox"
-                },
-                "title": "Get a Cookies File"
-            },
-            "init": {
-                "data": {
-                    "update_cookies": "Update cookies"
-                },
-                "description": "Update cookies for {username}?\n\nExpiration: {expiration}",
-                "title": "Cookies File"
-            },
             "max_gps_accuracy": {
                 "data": {
                     "max_gps_accuracy": "Maximum GPS accuracy (meters)"
@@ -191,23 +145,11 @@
                 "description": "Location updates with accuracy above this limit will be ignored.",
                 "title": "GPS Accuracy Limit"
             },
-            "old_cookies_invalid": {
-                "description": "Existing cookies file for {username} found but it is invalid:\n\n{cookies_file}",
-                "title": "Invalid Existing Cookies File"
-            },
             "update_period": {
                 "data": {
                     "scan_interval": "Update period"
                 },
                 "title": "Update Period"
-            },
-            "uploaded_cookie_menu": {
-                "description": "Expiration: {expiration}.",
-                "menu_options": {
-                    "account_entity": "Continue with cookies",
-                    "get_cookies_procedure_menu": "Upload a different cookies file"
-                },
-                "title": "Uploaded Cookies"
             }
         }
     }

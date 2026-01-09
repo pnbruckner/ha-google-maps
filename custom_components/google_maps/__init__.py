@@ -18,6 +18,7 @@ from homeassistant.helpers import (
 )
 from homeassistant.helpers.typing import ConfigType
 
+from .config_flow import GoogleMapsConfigFlow
 from .const import CONF_COOKIES_FILE, CONF_CREATE_ACCT_ENTITY, DOMAIN
 from .coordinator import GMConfigEntry, GMConfigEntryParams, GMDataUpdateCoordinator
 from .helpers import (
@@ -76,7 +77,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Migrate config entry."""
     _LOGGER.warning("%s: Migrating from version %s", entry.title, entry.version)
 
-    if entry.version > 3:
+    if entry.version > GoogleMapsConfigFlow.VERSION:
         # Can't downgrade from some unknown future version.
         return False
 
@@ -85,14 +86,29 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unique_id = entry.unique_id
 
     if entry.version == 1:
+        # Move CONF_COOKIES_FILE data -> options.
         options[CONF_COOKIES_FILE] = data.pop(CONF_COOKIES_FILE)
 
     if entry.version <= 2:
+        # Move CONF_USERNAME data -> unique_id.
         unique_id = cast(str, data.pop(CONF_USERNAME))
-        # TODO: Put CONF_COOKIES_FILE back in data (to support reconfig flow)???
+
+    if entry.version <= 3:
+        # Move CONF_COOKIES_FILE options -> data.
+        # Put CONF_COOKIES_FILE back in data to support reauth & reconfigure flows.
+        # It's not really an "option". It was only there when there wasn't such a thing
+        # as a reconfigure flow.
+        data[CONF_COOKIES_FILE] = options.pop(CONF_COOKIES_FILE)
+
+    # TODO: Before releasing BETA, merge versions 3 & 4!!
+    #       I.e., put "<= 3" statements into "<= 2", and change VERSION back to 3.
 
     hass.config_entries.async_update_entry(
-        entry, data=data, options=options, unique_id=unique_id, version=3
+        entry,
+        data=data,
+        options=options,
+        unique_id=unique_id,
+        version=GoogleMapsConfigFlow.VERSION,
     )
     _LOGGER.warning(
         "%s: Migration to version %s successful", entry.title, entry.version
@@ -155,8 +171,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: GMConfigEntry) -> bool:
             if device := dev_reg.async_get_device(dev_ids(uid)):
                 dev_reg.async_remove_device(device.id)
 
-        if entry.options[CONF_COOKIES_FILE] != (
-            cookies_file := entry.runtime_data.setup_options[CONF_COOKIES_FILE]
+        if entry.data[CONF_COOKIES_FILE] != (
+            cookies_file := entry.runtime_data.setup_data[CONF_COOKIES_FILE]
         ):
             # Cookies file has changed. Delete the old one.
             _del_cookies_file(hass, cookies_file)
@@ -166,6 +182,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: GMConfigEntry) -> bool:
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Remove a config entry."""
-    _del_cookies_file(hass, entry.options[CONF_COOKIES_FILE])
+    _del_cookies_file(hass, entry.data[CONF_COOKIES_FILE])
     if not _duplicate_usernames(hass):
         ir.async_delete_issue(hass, DOMAIN, "duplicate_usernames")
