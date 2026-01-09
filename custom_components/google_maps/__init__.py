@@ -1,6 +1,7 @@
 """The google_maps component."""
 from __future__ import annotations
 
+from collections import defaultdict
 from functools import partial
 import logging
 from typing import cast
@@ -36,12 +37,11 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 def _duplicate_usernames(hass: HomeAssistant) -> list[str]:
     """Return duplicate usernames in config entries."""
-    username_cfgs: dict[str, list[ConfigEntry]] = {}
+    username_cfgs: defaultdict[str, list[ConfigEntry]] = defaultdict(list)
     for cfg in hass.config_entries.async_entries(DOMAIN):
-        username_cfgs.setdefault(
-            cast(str, cfg.data[CONF_USERNAME] if cfg.version < 3 else cfg.unique_id),
-            [],
-        ).append(cfg)
+        username_cfgs[
+            cast(str, cfg.data[CONF_USERNAME] if cfg.version < 3 else cfg.unique_id)
+        ].append(cfg)
     return [username for username, cfgs in username_cfgs.items() if len(cfgs) > 1]
 
 

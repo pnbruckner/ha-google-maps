@@ -1,6 +1,7 @@
 """Google Maps helper functions, etc."""
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import asdict as dc_asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -193,7 +194,7 @@ class ConfigUniqueIDs:
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize assignments from Entity Registry."""
         self._all_uids: set[UniqueID] = set()
-        self._cfg_uids: dict[ConfigID, set[UniqueID]] = {}
+        self._cfg_uids: defaultdict[ConfigID, set[UniqueID]] = defaultdict(set)
 
         ent_reg = er.async_get(hass)
         for cfg in hass.config_entries.async_entries(DOMAIN, include_disabled=False):
@@ -220,7 +221,7 @@ class ConfigUniqueIDs:
         """
         uids -= self._all_uids - self.owned(cid)
         self._all_uids.update(uids)
-        self._cfg_uids.setdefault(cid, set()).update(uids)
+        self._cfg_uids[cid].update(uids)
         return uids
 
     def release(self, cid: ConfigID, uid: UniqueID) -> None:
