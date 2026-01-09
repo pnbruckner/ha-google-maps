@@ -161,7 +161,7 @@ class GoogleMapsFlow(ConfigEntryBaseFlow):
 class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
     """Google Maps config flow."""
 
-    VERSION = 4
+    VERSION = 3
 
     _get_new_cookies = True
     _expiration: datetime | None
@@ -454,7 +454,7 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
         update_entry = self._update_entry
         if update_entry:
             assert self.unique_id == self._username
-            # TODO: Use async_update_data_and_reload...???
+            # TODO: Use async_update_reload_and_abort(..., reload_even_if_entry_is_unchanged=False)???
             self.hass.config_entries.async_update_entry(
                 update_entry,
                 data=self._data,

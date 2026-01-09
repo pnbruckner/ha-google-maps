@@ -86,22 +86,22 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unique_id = entry.unique_id
 
     if entry.version == 1:
+        # 1 -> 2
+
         # Move CONF_COOKIES_FILE data -> options.
         options[CONF_COOKIES_FILE] = data.pop(CONF_COOKIES_FILE)
 
     if entry.version <= 2:
+        # 2 -> 3
+
         # Move CONF_USERNAME data -> unique_id.
         unique_id = cast(str, data.pop(CONF_USERNAME))
 
-    if entry.version <= 3:
         # Move CONF_COOKIES_FILE options -> data.
         # Put CONF_COOKIES_FILE back in data to support reauth & reconfigure flows.
         # It's not really an "option". It was only there when there wasn't such a thing
         # as a reconfigure flow.
         data[CONF_COOKIES_FILE] = options.pop(CONF_COOKIES_FILE)
-
-    # TODO: Before releasing BETA, merge versions 3 & 4!!
-    #       I.e., put "<= 3" statements into "<= 2", and change VERSION back to 3.
 
     hass.config_entries.async_update_entry(
         entry,
@@ -182,6 +182,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: GMConfigEntry) -> bool:
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Remove a config entry."""
-    _del_cookies_file(hass, entry.data[CONF_COOKIES_FILE])
+    # CONF_COOKIES_FILE is in data for config versions 1 & 3, but was in options for
+    # version 2. In case an old, disabled config entry is being deleted, try getting it
+    # from both places.
+    _del_cookies_file(
+        hass, entry.data.get(CONF_COOKIES_FILE, entry.options[CONF_COOKIES_FILE])
+    )
     if not _duplicate_usernames(hass):
         ir.async_delete_issue(hass, DOMAIN, "duplicate_usernames")
