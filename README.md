@@ -137,23 +137,32 @@ Find or search for "Google Maps", click on it, then follow the prompts.
 > It will take you to a sub-list of all Google related integrations.
 > There will also be a "Google Maps" item in that list, but it is for the built-in integration, not this custom one.
 
-<details>
-<summary>Configuration Options</summary>
+## Configuration Options
 
-The following options are presented when adding a Google account, and (except for username) when reconfiguring it (i.e., via the `CONFIGURE` button.)
+### Account Data
 
-### Google Maps Account Username
+These data items are shown when adding a new account or when reconfiguring the account,
+either manually (integration entry three-dot menu -> Reconfigure) or when an automatic reconfiguration is started due to expired cookies.
+
+#### Google Maps Account Email Address
 
 The email address for the Google account to be used for retrieving shared location.
 
-### Cookies File
+> NOTE: **This value is _not_ used to verify the associated cookies file.**
+It is only used to set the title of the integration entry and its service
+as well as the name, entity ID & unique ID of the "[Account Tracker Entity](#account-tracker-entity)", if enabled.
+#### Cookies File
 
 A cookies file must be [obtained](#obtaining-a-cookies-file) that authenticates and authorizes the user to access the specified Google account.
 If a cookies file exists from the legacy implementation, and it is still valid, an option will be presented to use that file.
 If not, a new cookies file can be uploaded via file browsing or drag & drop.
 There is no requirement for the file's name as there was in the legacy implementation.
 
-### Account Tracker Entity
+### Account Options
+
+These options are shown when adding a new account or when manually initiated (integration entry Configure button.)
+
+#### Account Tracker Entity
 
 The Google account specified above is used to create `device_tracker` entities for everyone who has shared their location with that account.
 In addition to those shared accounts, the integration can also create a tracker for the account itself if it has been associated with a device (phone, etc.)
@@ -162,7 +171,7 @@ Since there may not be a device associated with the account, or even if there is
 an option is provided to enable or disable the creation of this "account tracker" entity.
 See [Account Strategies](account-strategies) for more detail.
 
-### GPS Accuracy Limit
+#### GPS Accuracy Limit
 
 Each location update has an accuracy value that, together with the latitude & longitude, describes a circular area in which the device may actually be.
 Under certain conditions (poor GPS, cell or network coverage, etc.) that accuracy value can become quite large.
@@ -175,11 +184,9 @@ If, however, the reported accuracy is _more than_ the specified limit, then the 
 
 See the description above about "Refined Filtering of Data Updates" for more information about how this limit is used.
 
-### Update Period
+#### Update Period
 
 This option controls the time between requests for updates.
-
-</details>
 
 ## Missing Data for Account Tracker
 
@@ -188,7 +195,7 @@ will be missing some data that is usually present for the tracker entities creat
 Specifically, the name (and entity ID) will be based on the email address, not the actual name associated with the account,
 and the following attributes will be missing or invalid:
 
-`battery_charging`, `battery_level`, `entity_picture`, `full_name` & `nickname`
+`battery_charging`, `battery_level`, `entity_picture` & `nickname`
 
 All other attributes, including those related to location, will be present and valid.
 
