@@ -151,8 +151,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: GMConfigEntry) -> bool:
         # Release all the unique IDs that were "owned" by this config entry.
         hass.data[CFG_UNIQUE_IDS].release_all(ConfigID(entry.entry_id))
     else:
-        # Entry is being reloaded, possibly due to a reauthentication, reconfiguration,
-        # options update or a manual reload initiated by the user.
+        # It's possible entry is being reloaded due to a reauthentication,
+        # reconfiguration or an options update. So check if any entry data or options
+        # have changed that require further processing.
         if (
             not entry.options[CONF_CREATE_ACCT_ENTITY]
             and entry.runtime_data.setup_options[CONF_CREATE_ACCT_ENTITY]
