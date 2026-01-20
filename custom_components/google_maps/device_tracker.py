@@ -123,12 +123,15 @@ async def async_setup_entry(
     @callback
     def update_entities() -> None:
         """Update entities for people."""
+        # TODO: Do not remove entity unless its data is missing for a number of updates.
+        #       It seems it's possible for data to disappear for a bit but then come
+        #       back.
         uids = frozenset(coordinator.data)
         # NOTE: Unique ID of "account entity" is the account's email address.
         if remove_uids := entities.keys() - uids:
             for remove_uid in remove_uids:
                 entity = entities.pop(remove_uid)
-                _LOGGER.warning("Data no longer available for %s", entity.name)
+                _LOGGER.warning("Data no longer available for %s", entity.log_name)
                 entry.async_create_background_task(
                     hass, entity.async_remove(), "Remove GoogleMapsDeviceTracker entity"
                 )
@@ -255,6 +258,16 @@ class GoogleMapsDeviceTracker(
         # TODO: Still save/restore misc???
         return PersonData(self._loc, self._misc)
 
+    @property
+    def log_name(self) -> str:
+        """Return name to be used in log messages."""
+        return (
+            (self.registry_entry and self.registry_entry.name)
+            or self._friendly_name_internal()
+            or self.entity_id
+            or self._misc.full_name
+        )
+
     async def async_added_to_hass(self) -> None:
         """Run when entity about to be added to hass."""
         await super().async_added_to_hass()
@@ -332,4 +345,4 @@ class GoogleMapsDeviceTracker(
         """Log reason for ignoring location data."""
         if reason != self._skip_reason:
             self._skip_reason = reason
-            _LOGGER.debug("Ignoring %s location data because %s", self.name, reason)
+            _LOGGER.debug("Ignoring %s location data because %s", self.log_name, reason)
