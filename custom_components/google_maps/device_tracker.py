@@ -1,8 +1,11 @@
 """Support for Google Maps location sharing."""
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Mapping
 from copy import copy
+from dataclasses import dataclass
+from datetime import datetime
 from functools import partial
 import logging
 from typing import Any, cast
@@ -15,7 +18,10 @@ from homeassistant.const import ATTR_BATTERY_CHARGING
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import async_track_entity_registry_updated_event
+from homeassistant.helpers.event import (
+    async_call_later,
+    async_track_entity_registry_updated_event,
+)
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
@@ -27,6 +33,7 @@ from .const import (
     ATTRIBUTION,
     CONF_MAX_GPS_ACCURACY,
     DT_NO_RECORD_ATTRS,
+    MISSING_DATA_GRACE_PERIOD,
 )
 from .coordinator import GMConfigEntry, GMDataUpdateCoordinator
 from .helpers import (
@@ -41,6 +48,14 @@ from .helpers import (
 _LOGGER = logging.getLogger(__name__)
 
 
+@dataclass
+class MissingParams:
+    """Missing parameters."""
+
+    name: str
+    unsub: CALLBACK_TYPE | None
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: GMConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
@@ -53,7 +68,9 @@ async def async_setup_entry(
     max_gps_accuracy = entry.options[CONF_MAX_GPS_ACCURACY]
     unique_ids = hass.data[CFG_UNIQUE_IDS]
 
+    lock = asyncio.Lock()
     entities: dict[UniqueID, GoogleMapsDeviceTracker] = {}
+    missing: dict[UniqueID, MissingParams] = {}
     registered_entities: dict[str, UniqueID] = {
         ent.entity_id: UniqueID(ent.unique_id)
         for ent in er.async_entries_for_config_entry(ent_reg, cid)
@@ -120,40 +137,88 @@ async def async_setup_entry(
         registered_entities[entity_id] = uid
         track_ent_reg_updates()
 
-    @callback
-    def update_entities() -> None:
+    def schedule_entity_removal(uid: UniqueID) -> None:
+        """Schedule an entity to be removed."""
+        # NOTE: The entity is not removed immediately because there are times when a
+        #       person's data goes missing for a little while, but then comes back again
+        #       on its own. The state of the entity will just not update during the time
+        #       the data is missing.
+        assert uid not in missing
+        missing[uid] = MissingParams(
+            name := entities[uid].log_name,
+            async_call_later(
+                hass, MISSING_DATA_GRACE_PERIOD, partial(remove_entity, uid)
+            ),
+        )
+        _LOGGER.warning("Data missing for %s", name)
+
+    def unschedule_entity_removal(uid: UniqueID) -> None:
+        """Unschedule removal of entity."""
+        params = missing.pop(uid)
+        if params.unsub:
+            params.unsub()
+        _LOGGER.warning("Data available again for %s", params.name)
+
+    async def remove_entity(uid: UniqueID, _: datetime) -> None:
+        """Remove entity."""
+        # NOTE: They will still be in the entity registry, so they will still exist in
+        #       HA's state machine, but they will become unavailable. The user can then
+        #       completely remove them if they want. Unless, of course, their data comes
+        #       back again, in which case, the entity will be recreated.
+        # Need to do this with a lock so that update_entities can't create a new Entity
+        # for the same UID that would add itself to the state machine, then the
+        # async_remove here would remove it from the state machine.
+        async with lock:
+            assert missing[uid].unsub
+            missing[uid].unsub = None
+            entity = entities.pop(uid)
+            await entity.async_remove()
+        # Do not release uid from unique_ids in case data comes back and entity can
+        # be created again. It will still be in the Entity Registry, at least if and
+        # until the user removes it from the registry. And even then, no need to
+        # release the uid from unique_ids since it's not likely to come back and it
+        # will be released if entry gets unloaded and it won't get added next time
+        # entry loads.
+
+    async def update_entities() -> None:
         """Update entities for people."""
-        # TODO: Do not remove entity unless its data is missing for a number of updates.
-        #       It seems it's possible for data to disappear for a bit but then come
-        #       back.
-        uids = frozenset(coordinator.data)
-        # NOTE: Unique ID of "account entity" is the account's email address.
-        if remove_uids := entities.keys() - uids:
-            for remove_uid in remove_uids:
-                entity = entities.pop(remove_uid)
-                _LOGGER.warning("Data no longer available for %s", entity.log_name)
-                entry.async_create_background_task(
-                    hass, entity.async_remove(), "Remove GoogleMapsDeviceTracker entity"
-                )
-                # Do not release uid from unique_ids in case data comes back and entity
-                # can be created again. It will still be in the Entity Registry, at least
-                # if and until the user removes it from the registry. And even then, no
-                # need to release the uid from unique_ids since it's not likely to come
-                # back and it will be released if entry gets unloaded and it won't get
-                # added next time entry loads.
-        if create_uids := unique_ids.take(cid, uids) - entities.keys():
-            new_entities = {
-                uid: GoogleMapsDeviceTracker(
-                    coordinator, uid, max_gps_accuracy, partial(track_entity, uid)
-                )
-                for uid in create_uids
-            }
-            async_add_entities(new_entities.values())
-            entities.update(new_entities)
+        async with lock:
+            # NOTE: Unique ID of "account entity" is the account's email address.
+            uids = frozenset(coordinator.data)
+
+            # For any entity that was scheduled to be removed due to its data being
+            # missing, cancel the removal if the data is available again.
+            for uid in missing.keys() & uids:
+                unschedule_entity_removal(uid)
+
+            # For any newly missing data, schedule a task to remove the entity after a
+            # grace period.
+            for uid in entities.keys() - uids - missing.keys():
+                schedule_entity_removal(uid)
+
+            # Attempt to take ownership of any unique IDs that have not yet been taken
+            # by other config entries, and create entities for those that have been
+            # "taken" and have not had entities created yet.
+            if create_uids := unique_ids.take(cid, uids) - entities.keys():
+                new_entities = {
+                    uid: GoogleMapsDeviceTracker(
+                        coordinator, uid, max_gps_accuracy, partial(track_entity, uid)
+                    )
+                    for uid in create_uids
+                }
+                async_add_entities(new_entities.values())
+                entities.update(new_entities)
+
+    @callback
+    def update_entities_cb() -> None:
+        """Update entities for people."""
+        entry.async_create_background_task(
+            hass, update_entities(), f"Update entities for {entry.title}"
+        )
 
     track_ent_reg_updates()
-    update_entities()
-    entry.async_on_unload(coordinator.async_add_listener(update_entities))
+    await update_entities()
+    entry.async_on_unload(coordinator.async_add_listener(update_entities_cb))
     entry.async_on_unload(stop_tracking_ent_reg_updates)
 
 
@@ -295,7 +360,8 @@ class GoogleMapsDeviceTracker(
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         if not (data := self.coordinator.data.get(cast(UniqueID, self.unique_id))):
-            # Data no longer availble. Entity will be removed.
+            # Data not availble. Keep current data for now.
+            # If data is not available long enough, Entity will be removed.
             return
         assert data.misc
         assert data.loc
