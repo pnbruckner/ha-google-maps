@@ -36,14 +36,7 @@ from .const import (
     MISSING_DATA_GRACE_PERIOD,
 )
 from .coordinator import GMConfigEntry, GMDataUpdateCoordinator
-from .helpers import (
-    CFG_UNIQUE_IDS,
-    ConfigID,
-    LocationData,
-    PersonData,
-    UniqueID,
-    dev_ids,
-)
+from .helpers import CFG_UNIQUE_IDS, ConfigID, LocationData, UniqueID, dev_ids
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -318,10 +311,9 @@ class GoogleMapsDeviceTracker(
         return self._loc.longitude
 
     @property
-    def extra_restore_state_data(self) -> PersonData:
+    def extra_restore_state_data(self) -> LocationData | None:
         """Return Google Maps specific state data to be restored."""
-        # TODO: Still save/restore misc???
-        return PersonData(self._loc, self._misc)
+        return self._loc
 
     @property
     def log_name(self) -> str:
@@ -337,15 +329,22 @@ class GoogleMapsDeviceTracker(
         """Run when entity about to be added to hass."""
         await super().async_added_to_hass()
 
+        # Now that entity ID has been determined, add it to list of entity IDs to
+        # monitor being removed from entity registry.
         self._track_entity(self.entity_id)
 
         # Restore state if possible.
-        if (last_extra_data := await self.async_get_last_extra_data()) and (
-            last_person_data := PersonData.from_dict(last_extra_data.as_dict())
-        ):
-            # Always restore loc data as "previous location" first, then overwrite
-            # with new location below if available and "better."
-            self._loc = last_person_data.loc
+        if last_extra_data := await self.async_get_last_extra_data():
+            # Previous versions stored PersonData which included misc & loc.
+            # Now only loc is stored directly.
+            last_extra_data_dict: dict[str, Any] = last_extra_data.as_dict()
+            if last_loc_data_dict := cast(
+                dict[str, Any] | None,
+                last_extra_data_dict.get("loc", last_extra_data_dict),
+            ):
+                # Always restore loc data as "previous location" first, then overwrite
+                # with new location below if available and "better."
+                self._loc = LocationData.from_dict(last_loc_data_dict)
 
         # Now that previous state has been restored, update with new data if possible.
         # Note that although the Entity was created only when data for this uid was

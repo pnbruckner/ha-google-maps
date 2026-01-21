@@ -55,7 +55,7 @@ class FromAttributesError(Exception):
 
 
 @dataclass(frozen=True)
-class LocationData:
+class LocationData(ExtraStoredData):
     """Location data."""
 
     address: str
@@ -115,24 +115,6 @@ class MiscData:
     full_name: str
     nickname: str
 
-    def as_dict(self) -> dict[str, Any]:
-        """Return a dict representation of the data."""
-        return dc_asdict(self)
-
-    @classmethod
-    def from_dict(cls, restored: dict[str, Any]) -> Self | None:
-        """Initialize miscellaneous data from a dict."""
-        try:
-            return cls(
-                restored["battery_charging"],
-                restored["battery_level"],
-                restored["entity_picture"],
-                restored["full_name"],
-                restored["nickname"],
-            )
-        except KeyError:
-            return None
-
     @classmethod
     def from_person(cls, person: GMPerson) -> Self:
         """Initialize miscellaneous data from GMPerson object."""
@@ -146,24 +128,11 @@ class MiscData:
 
 
 @dataclass(frozen=True)
-class PersonData(ExtraStoredData):
+class PersonData:
     """Shared person data."""
 
-    loc: LocationData | None
-    misc: MiscData | None
-
-    def as_dict(self) -> dict[str, Any]:
-        """Return a dict representation of the data."""
-        return dc_asdict(self)
-
-    @classmethod
-    def from_dict(cls, restored: dict[str, Any]) -> Self | None:
-        """Return PersonData created from a dict."""
-        if (loc := restored.get("loc")) is not None:
-            loc = LocationData.from_dict(loc)
-        if (misc := restored.get("misc")) is not None:
-            misc = MiscData.from_dict(misc)
-        return cls(loc, misc)
+    loc: LocationData
+    misc: MiscData
 
     @classmethod
     def from_person(cls, person: GMPerson) -> Self:
