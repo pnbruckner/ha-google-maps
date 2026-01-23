@@ -138,19 +138,19 @@ async def async_setup_entry(
         #       the data is missing.
         assert uid not in missing
         missing[uid] = MissingParams(
-            name := entities[uid].log_name,
+            entities[uid].log_name,
             async_call_later(
                 hass, MISSING_DATA_GRACE_PERIOD, partial(remove_entity, uid)
             ),
         )
-        _LOGGER.warning("Data missing for %s", name)
 
     def unschedule_entity_removal(uid: UniqueID) -> None:
         """Unschedule removal of entity."""
-        params = missing.pop(uid)
-        if params.unsub:
-            params.unsub()
-        _LOGGER.warning("Data available again for %s", params.name)
+        mp = missing.pop(uid)
+        if mp.unsub:
+            mp.unsub()
+        else:
+            _LOGGER.warning("Data available again for %s", mp.name)
 
     async def remove_entity(uid: UniqueID, _: datetime) -> None:
         """Remove entity."""
@@ -160,10 +160,13 @@ async def async_setup_entry(
         #       back again, in which case, the entity will be recreated.
         # Need to do this with a lock so that update_entities can't create a new Entity
         # for the same UID that would add itself to the state machine, then the
-        # async_remove here would remove it from the state machine.
+        # async_remove here would remove it from the state machine. Also, two entities
+        # with the same UID could cause an error or a different entity ID (e.g., xx_2).
         async with lock:
-            assert missing[uid].unsub
-            missing[uid].unsub = None
+            mp = missing[uid]
+            _LOGGER.warning("Data missing for %s", mp.name)
+            assert mp.unsub
+            mp.unsub = None
             entity = entities.pop(uid)
             await entity.async_remove()
         # Do not release uid from unique_ids in case data comes back and entity can
