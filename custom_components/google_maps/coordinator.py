@@ -48,6 +48,7 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
     """Google Maps data update coordinator."""
 
     config_entry: ConfigEntry
+    _api: GMLocSharing
     _cookies_last_synced: datetime
     _unsub_exp: Callable[[], None] | None = None
 
@@ -57,7 +58,7 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
         self._create_acct_entity = entry.options[CONF_CREATE_ACCT_ENTITY]
 
         # The account's username is used as the config entry's unique ID.
-        self._api = GMLocSharing(cast(str, entry.unique_id))
+        self._account_email = cast(str, entry.unique_id)
         self.cookie_lock = Lock()
         self._unsub_final_write = hass.bus.async_listen_once(
             EVENT_HOMEASSISTANT_FINAL_WRITE, self._save_cookies_if_changed
@@ -98,6 +99,9 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
 
     async def _async_setup(self) -> None:
         """Set up the coordinator."""
+        self._api = await self.hass.async_add_executor_job(
+            GMLocSharing, self._account_email
+        )
         # Load the cookies before first update.
         async with self.cookie_lock:
             try:

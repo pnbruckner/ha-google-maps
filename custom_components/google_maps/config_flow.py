@@ -235,14 +235,19 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
             # being changed, then the entry using it must be the one being updated.
             if update_entry:
                 if not entry_w_username or entry_w_username is update_entry:
-                    self._init_gmcfgflow(
-                        username, update_entry.options, update_entry.data
+                    await self.hass.async_add_executor_job(
+                        self._init_gmcfgflow,
+                        username,
+                        update_entry.options,
+                        update_entry.data,
                     )
                     return await self.async_step_check_cookies()
             # If creating a new entry, then no other existing entry can be using the
             # same username.
             elif not entry_w_username:
-                self._init_gmcfgflow(username, {}, {})
+                await self.hass.async_add_executor_job(
+                    self._init_gmcfgflow, username, {}, {}
+                )
                 return await self.async_step_get_cookies()
             errors[CONF_USERNAME] = "already_configured"
         elif update_entry:
