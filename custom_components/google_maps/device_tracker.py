@@ -323,7 +323,10 @@ class GoogleMapsDeviceTracker(
         """Return name to be used in log messages."""
         return (
             (self.registry_entry and self.registry_entry.name)
-            or self._friendly_name_internal()
+            or (
+                (device_entry := self.device_entry)
+                and (device_entry.name_by_user or device_entry.name)
+            )
             or self.entity_id
             or self._misc.full_name
         )
