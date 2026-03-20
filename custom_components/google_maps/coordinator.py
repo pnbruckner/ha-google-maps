@@ -3,24 +3,18 @@ from __future__ import annotations
 
 from asyncio import Lock
 from collections.abc import Callable
+from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 import logging
-from pathlib import Path
+from typing import Any, cast
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    CONF_SCAN_INTERVAL,
-    CONF_USERNAME,
-    EVENT_HOMEASSISTANT_FINAL_WRITE,
-)
+from homeassistant.const import CONF_SCAN_INTERVAL, EVENT_HOMEASSISTANT_FINAL_WRITE
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_point_in_utc_time
-from homeassistant.helpers.issue_registry import (
-    IssueSeverity,
-    async_create_issue,
-    async_delete_issue,
-)
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -37,57 +31,60 @@ from .gm_loc_sharing import (
     InvalidData,
     RequestFailed,
 )
-from .helpers import ConfigID, PersonData, UniqueID, cookies_file_path, expiring_soon
+from .helpers import PersonData, UniqueID, cookies_file_path, expiring_soon
 
 _LOGGER = logging.getLogger(__name__)
 
 
 GMData = dict[UniqueID, PersonData]
+"""Google Maps data.
+
+Dictionary of unique ID -> PersonData.
+For "account entity", unique ID is the account's email address.
+"""
 
 
 class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
     """Google Maps data update coordinator."""
 
     config_entry: ConfigEntry
+    _api: GMLocSharing
     _cookies_last_synced: datetime
     _unsub_exp: Callable[[], None] | None = None
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         """Initialize coordinator."""
-        self._cid = ConfigID(entry.entry_id)
-        self._username = entry.data[CONF_USERNAME]
-        self._cookies_file = str(
-            cookies_file_path(hass, entry.options[CONF_COOKIES_FILE])
-        )
+        self._cookies_file = str(cookies_file_path(hass, entry.data[CONF_COOKIES_FILE]))
         self._create_acct_entity = entry.options[CONF_CREATE_ACCT_ENTITY]
 
-        self._api = GMLocSharing(self._username)
+        # The account's username is used as the config entry's unique ID.
+        self._account_email = cast(str, entry.unique_id)
         self.cookie_lock = Lock()
         self._unsub_final_write = hass.bus.async_listen_once(
             EVENT_HOMEASSISTANT_FINAL_WRITE, self._save_cookies_if_changed
         )
 
-        scan_interval = timedelta(seconds=entry.options[CONF_SCAN_INTERVAL])
-        super().__init__(hass, _LOGGER, name=entry.title, update_interval=scan_interval)
-        # always_update added in 2023.9.0b0.
-        if hasattr(self, "always_update"):
-            self.always_update = False
+        super().__init__(
+            hass,
+            _LOGGER,
+            config_entry=entry,
+            name=entry.title,
+            update_interval=timedelta(seconds=entry.options[CONF_SCAN_INTERVAL]),
+            always_update=False,
+        )
 
     async def async_shutdown(self) -> None:
         """Cancel listeners, save cookies & close API."""
         await super().async_shutdown()
         self._unsub_all()
         cur_cookies_file = str(
-            cookies_file_path(self.hass, self.config_entry.options[CONF_COOKIES_FILE])
+            cookies_file_path(self.hass, self.config_entry.data[CONF_COOKIES_FILE])
         )
-        # Has cookies file name changed, e.g., due to reauth or user reconfiguration?
-        # If not, save cookies to existing file. If so, delete file that was being used
-        # because there's a new one to be used after reload/restart.
+        # Save cookies if cookies file name has not changed (e.g., due to reauth or user
+        # reconfiguration) and cookies themselves have changed.
         if cur_cookies_file == self._cookies_file:
             await self._save_cookies_if_changed(shutting_down=True)
-        else:
-            await self.hass.async_add_executor_job(Path(self._cookies_file).unlink)
-        self._api.close()
+        self.hass.async_add_executor_job(self._api.close)
 
     def _unsub_all(self) -> None:
         """Run removers."""
@@ -102,6 +99,9 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
 
     async def _async_setup(self) -> None:
         """Set up the coordinator."""
+        self._api = await self.hass.async_add_executor_job(
+            GMLocSharing, self._account_email
+        )
         # Load the cookies before first update.
         async with self.cookie_lock:
             try:
@@ -113,7 +113,10 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
             self._cookies_file_synced()
 
     async def _async_update_data(self) -> GMData:
-        """Fetch the latest data from the source."""
+        """Fetch the latest data from the source.
+
+        If creating "account entity", its unique ID will be the account's email address.
+        """
         async with self.cookie_lock:
             try:
                 await self.hass.async_add_executor_job(self._api.get_new_data)
@@ -123,7 +126,9 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
             except (RequestFailed, InvalidData) as err:
                 raise UpdateFailed(f"{err.__class__.__name__}: {err}") from err
 
-        await self.hass.async_create_task(self._save_cookies_if_changed())
+        await self.config_entry.async_create_task(
+            self.hass, self._save_cookies_if_changed(), "Save cookies if changed"
+        )
         return {
             UniqueID(person.id): PersonData.from_person(person) for person in people
         }
@@ -162,7 +167,7 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
         if expiring_soon(cookies_expiration):
             self._create_issue()
         else:
-            async_delete_issue(self.hass, DOMAIN, self._cid)
+            ir.async_delete_issue(self.hass, DOMAIN, self.config_entry.entry_id)
             if cookies_expiration and not shutting_down:
                 self._unsub_expiration()
                 self._unsub_exp = async_track_point_in_utc_time(
@@ -174,19 +179,35 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
     @callback
     def _create_issue(self, _utcnow: datetime | None = None) -> None:
         """Create repair issue for cookies which are expiring soon."""
-        async_create_issue(
+        ir.async_create_issue(
             self.hass,
             DOMAIN,
-            self._cid,
+            self.config_entry.entry_id,
             is_fixable=False,
-            is_persistent=False,
-            severity=IssueSeverity.WARNING,
+            severity=ir.IssueSeverity.WARNING,
             translation_key="expiring_soon",
             translation_placeholders={
-                "entry_id": self._cid,
-                "username": self._username,
+                "entry_id": self.config_entry.entry_id,
+                "username": cast(str, self.config_entry.unique_id),
             },
         )
 
 
-type GMConfigEntry = ConfigEntry[GMDataUpdateCoordinator]
+@dataclass
+class GMConfigEntryParams:
+    """Google Maps Config Entry Parameters."""
+
+    coordinator: GMDataUpdateCoordinator
+    setup_data: dict[str, Any]
+    setup_options: dict[str, Any]
+
+    def __init__(
+        self, coordinator: GMDataUpdateCoordinator, entry: ConfigEntry
+    ) -> None:
+        """Initialize."""
+        self.coordinator = coordinator
+        self.setup_data = deepcopy(dict(entry.data))
+        self.setup_options = deepcopy(dict(entry.options))
+
+
+GMConfigEntry = ConfigEntry[GMConfigEntryParams]

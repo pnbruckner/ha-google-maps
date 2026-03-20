@@ -1,9 +1,11 @@
 {
     "config": {
         "abort": {
-            "reauth_successful": "Re-authentication was successful"
+            "reauth_successful": "Re-authentication was successful.",
+            "reconfigure_successful": "Re-configuration was successful."
         },
         "error": {
+            "already_configured": "Account is already configured. Please use a different email address.",
             "invalid_cookies_file": "Invalid cookies file."
         },
         "step": {
@@ -14,16 +16,16 @@
                 "description": "Unlike trackers created for accounts that share their location with {username}, the tracker created for the {username} account holder will be missing some data.\n\nSee {doc} for more information.\n\nShould a tracker be created for the {username} account holder?",
                 "title": "Account Tracker Entity"
             },
+            "check_cookies": {
+                "data": {
+                    "update_cookies": "Update cookies"
+                },
+                "description": "Update cookies for {username}?\n\nExpiration: {expiration}",
+                "title": "Cookies File"
+            },
             "chrome": {
                 "description": "{procedure}",
                 "title": "Get Cookies Using Google Chrome"
-            },
-            "cookies": {
-                "data": {
-                    "use_existing_cookies": "Use existing cookies file"
-                },
-                "description": "Use existing cookies file for {username}?\n\nFound with expiraton of {expiration}:\n\n{cookies_file}",
-                "title": "Use Existing Cookies File"
             },
             "cookies_upload": {
                 "data": {
@@ -39,6 +41,13 @@
             "firefox": {
                 "description": "{procedure}",
                 "title": "Get Cookies Using Mozilla Firefox"
+            },
+            "get_cookies": {
+                "data": {
+                    "use_existing_cookies": "Use existing cookies file"
+                },
+                "description": "Use existing cookies file for {username}?\n\nFound with expiraton of {expiration}:\n\n{cookies_file}",
+                "title": "Use Existing Cookies File"
             },
             "get_cookies_procedure_menu": {
                 "description": "Choose browser type for detailed instructions on how to get a cookies file.",
@@ -71,21 +80,26 @@
                 "description": "Expiration: {expiration}.",
                 "menu_options": {
                     "account_entity": "Continue with cookies",
-                    "get_cookies_procedure_menu": "Upload a different cookies file",
-                    "reauth_done": "Use cookies"
+                    "done": "Use cookies",
+                    "get_cookies_procedure_menu": "Upload a different cookies file"
                 },
                 "title": "Uploaded Cookies"
             },
-            "user": {
+            "username": {
                 "data": {
-                    "username": "Username"
+                    "username": "Email address"
                 },
                 "description": "The email address for the Google account to be used for retrieving shared location.",
-                "title": "Google Maps Account Username"
+                "title": "Google Maps Account"
             }
         }
     },
     "entity": {
+        "binary_sensor": {
+            "online": {
+                "name": "online"
+            }
+        },
         "device_tracker": {
             "tracker": {
                 "state_attributes": {
@@ -106,15 +120,16 @@
         }
     },
     "issues": {
+        "duplicate_usernames": {
+            "description": "{usernames} used in multiple integration entries which is no longer allowed.\n\nTo fix, [click here](/config/integrations/integration/google_maps), remove all but one integration entry for each email address, then restart Home Assistant.",
+            "title": "Duplicate Email Addresses"
+        },
         "expiring_soon": {
             "description": "Cookies for {username} are expiring soon.\n\nTo fix, [click here](/config/integrations/integration/google_maps#config_entry={entry_id}) then click CONFIGURE and upload new cookies.",
             "title": "Google Maps Cookies Expiring Soon"
         }
     },
     "options": {
-        "error": {
-            "invalid_cookies_file": "Invalid cookies file."
-        },
         "step": {
             "account_entity": {
                 "data": {
@@ -123,49 +138,6 @@
                 "description": "Unlike trackers created for accounts that share their location with {username}, the tracker created for the {username} account holder will be missing some data.\n\nSee {doc} for more information.\n\nShould a tracker be created for the {username} account holder?",
                 "title": "Account Tracker Entity"
             },
-            "chrome": {
-                "description": "{procedure}",
-                "title": "Get Cookies Using Google Chrome"
-            },
-            "cookies": {
-                "data": {
-                    "use_existing_cookies": "Use existing cookies file"
-                },
-                "description": "Use existing cookies file for {username}?\n\nFound with expiraton of {expiration}:\n\n{cookies_file}",
-                "title": "Use Existing Cookies File"
-            },
-            "cookies_upload": {
-                "data": {
-                    "cookies": "Cookies file"
-                },
-                "description": "Upload cookies file for {username}.",
-                "title": "Upload Cookies File"
-            },
-            "edge": {
-                "description": "{procedure}",
-                "title": "Get Cookies Using Microsoft Edge"
-            },
-            "firefox": {
-                "description": "{procedure}",
-                "title": "Get Cookies Using Mozilla Firefox"
-            },
-            "get_cookies_procedure_menu": {
-                "description": "Choose browser type for detailed instructions on how to get a cookies file.",
-                "menu_options": {
-                    "chrome": "Google Chrome",
-                    "cookies_upload": "Continue straight to uploading a file",
-                    "edge": "Microsoft Edge",
-                    "firefox": "Mozilla Firefox"
-                },
-                "title": "Get a Cookies File"
-            },
-            "init": {
-                "data": {
-                    "update_cookies": "Update cookies"
-                },
-                "description": "Update cookies for {username}?\n\nExpiration: {expiration}",
-                "title": "Cookies File"
-            },
             "max_gps_accuracy": {
                 "data": {
                     "max_gps_accuracy": "Maximum GPS accuracy (meters)"
@@ -173,23 +145,11 @@
                 "description": "Location updates with accuracy above this limit will be ignored.",
                 "title": "GPS Accuracy Limit"
             },
-            "old_cookies_invalid": {
-                "description": "Existing cookies file for {username} found but it is invalid:\n\n{cookies_file}",
-                "title": "Invalid Existing Cookies File"
-            },
             "update_period": {
                 "data": {
                     "scan_interval": "Update period"
                 },
                 "title": "Update Period"
-            },
-            "uploaded_cookie_menu": {
-                "description": "Expiration: {expiration}.",
-                "menu_options": {
-                    "account_entity": "Continue with cookies",
-                    "get_cookies_procedure_menu": "Upload a different cookies file"
-                },
-                "title": "Uploaded Cookies"
             }
         }
     }

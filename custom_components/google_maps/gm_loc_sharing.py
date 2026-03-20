@@ -131,7 +131,10 @@ class GMPerson:
 
     @classmethod
     def acct_from_data(cls, data: Sequence[Any], account_email: str) -> Self | None:
-        """Initialize account holder from server data."""
+        """Initialize account holder from server data.
+
+        id wll be account's email address.
+        """
         try:
             return cls(
                 account_email,
@@ -249,7 +252,10 @@ class GMLocSharing:
             raise InvalidData(f"Unexpected parsed data: {self._data}") from None
 
     def get_people(self, include_acct_person: bool) -> list[GMPerson]:
-        """Get people from data."""
+        """Get people from data.
+
+        If including "account person", its id will be the account's email address.
+        """
         people: list[GMPerson] = []
         bad_data: list[list[Any]] = []
         if len(self._data) < 1:
