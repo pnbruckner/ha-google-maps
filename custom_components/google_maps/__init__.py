@@ -186,8 +186,9 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     # CONF_COOKIES_FILE is in data for config versions 1 & 3, but was in options for
     # version 2. In case an old, disabled config entry is being deleted, try getting it
     # from both places.
-    _del_cookies_file(
-        hass, entry.data.get(CONF_COOKIES_FILE, entry.options[CONF_COOKIES_FILE])
-    )
+    if cookies_file := entry.data.get(CONF_COOKIES_FILE) or entry.options.get(
+        CONF_COOKIES_FILE
+    ):
+        _del_cookies_file(hass, cookies_file)
     if not _duplicate_usernames(hass):
         ir.async_delete_issue(hass, DOMAIN, "duplicate_usernames")
