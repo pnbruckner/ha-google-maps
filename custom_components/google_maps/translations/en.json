@@ -72,7 +72,12 @@
             },
             "update_period": {
                 "data": {
-                    "scan_interval": "Update period"
+                    "scan_interval": "Update period (fallback)",
+                    "scan_interval_entity": "Dynamic scan interval entity (optional)"
+                },
+                "data_description": {
+                    "scan_interval": "Used when no dynamic entity is set, or when the entity is unavailable.",
+                    "scan_interval_entity": "When set, this input_number or number entity controls the scan interval at runtime. Changes apply immediately without restarting the integration."
                 },
                 "title": "Update Period"
             },
@@ -147,7 +152,12 @@
             },
             "update_period": {
                 "data": {
-                    "scan_interval": "Update period"
+                    "scan_interval": "Update period (fallback)",
+                    "scan_interval_entity": "Dynamic scan interval entity (optional)"
+                },
+                "data_description": {
+                    "scan_interval": "Used when no dynamic entity is set, or when the entity is unavailable.",
+                    "scan_interval_entity": "When set, this input_number or number entity controls the scan interval at runtime. Changes apply immediately without restarting the integration."
                 },
                 "title": "Update Period"
             }

@@ -10,17 +10,26 @@ import logging
 from typing import Any, cast
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_SCAN_INTERVAL, EVENT_HOMEASSISTANT_FINAL_WRITE
+from homeassistant.const import (
+    CONF_SCAN_INTERVAL,
+    EVENT_HOMEASSISTANT_FINAL_WRITE,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+)
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import issue_registry as ir
-from homeassistant.helpers.event import async_track_point_in_utc_time
+from homeassistant.helpers.event import (
+    async_track_point_in_utc_time,
+    async_track_state_change_event,
+)
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_COOKIES_FILE,
     CONF_CREATE_ACCT_ENTITY,
+    CONF_SCAN_INTERVAL_ENTITY,
     COOKIE_WARNING_PERIOD,
     DOMAIN,
 )
@@ -73,6 +82,45 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
             always_update=False,
         )
 
+        if interval_entity := entry.options.get(CONF_SCAN_INTERVAL_ENTITY):
+            entry.async_on_unload(
+                async_track_state_change_event(
+                    hass, [interval_entity], self._handle_interval_entity_change
+                )
+            )
+
+    @callback
+    def _apply_update_interval(self, interval: timedelta) -> None:
+        """Apply a new update interval and reschedule the next refresh."""
+        if hasattr(self, "async_set_update_interval"):
+            self.async_set_update_interval(interval)
+        else:
+            self.update_interval = interval
+            if self._unsub_refresh:
+                self._unsub_refresh()
+                self._unsub_refresh = None
+            self._schedule_refresh()
+
+    @callback
+    def _handle_interval_entity_change(self, event: Event) -> None:
+        """Handle state change of the dynamic scan interval entity."""
+        new_state = event.data.get("new_state")
+        if new_state is None or new_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            return
+        try:
+            new_seconds = float(new_state.state)
+        except (ValueError, TypeError):
+            return
+        if new_seconds <= 0:
+            return
+        self._apply_update_interval(timedelta(seconds=new_seconds))
+        _LOGGER.debug(
+            "Update interval changed to %s seconds via %s",
+            new_seconds,
+            event.data.get("entity_id"),
+        )
+        self.hass.async_create_task(self.async_refresh())
+
     async def async_shutdown(self) -> None:
         """Cancel listeners, save cookies & close API."""
         await super().async_shutdown()
@@ -111,6 +159,19 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
             except (InvalidCookiesFile, InvalidCookies) as err:
                 raise ConfigEntryAuthFailed(f"{err.__class__.__name__}: {err}") from err
             self._cookies_file_synced()
+
+        # Apply current state of the dynamic interval entity if already available.
+        if (
+            (interval_entity := self.config_entry.options.get(CONF_SCAN_INTERVAL_ENTITY))
+            and (state := self.hass.states.get(interval_entity))
+            and state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN)
+        ):
+            try:
+                new_seconds = float(state.state)
+                if new_seconds > 0:
+                    self._apply_update_interval(timedelta(seconds=new_seconds))
+            except (ValueError, TypeError):
+                pass
 
     async def _async_update_data(self) -> GMData:
         """Fetch the latest data from the source.

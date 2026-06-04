@@ -30,6 +30,8 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.selector import (
     BooleanSelector,
     DurationSelector,
+    EntitySelector,
+    EntitySelectorConfig,
     FileSelector,
     FileSelectorConfig,
     NumberSelector,
@@ -46,6 +48,7 @@ from .const import (
     CONF_COOKIES_FILE,
     CONF_CREATE_ACCT_ENTITY,
     CONF_MAX_GPS_ACCURACY,
+    CONF_SCAN_INTERVAL_ENTITY,
     DEF_SCAN_INTERVAL_SEC,
     DOMAIN,
 )
@@ -139,16 +142,28 @@ class GoogleMapsFlow(ConfigEntryBaseFlow):
             self._options[CONF_SCAN_INTERVAL] = int(
                 cv.time_period_dict(user_input[CONF_SCAN_INTERVAL]).total_seconds()
             )
+            self._options[CONF_SCAN_INTERVAL_ENTITY] = user_input.get(
+                CONF_SCAN_INTERVAL_ENTITY
+            )
             return await self.async_step_done()
 
-        data_schema = vol.Schema({vol.Required(CONF_SCAN_INTERVAL): DurationSelector()})
+        data_schema = vol.Schema(
+            {
+                vol.Required(CONF_SCAN_INTERVAL): DurationSelector(),
+                vol.Optional(CONF_SCAN_INTERVAL_ENTITY): EntitySelector(
+                    EntitySelectorConfig(domain=["input_number", "number"])
+                ),
+            }
+        )
         default = self._options.get(CONF_SCAN_INTERVAL, DEF_SCAN_INTERVAL_SEC)
         def_m, def_s = divmod(default, 60)
         def_h, def_m = divmod(def_m, 60)
-        data_schema = self.add_suggested_values_to_schema(
-            data_schema,
-            {CONF_SCAN_INTERVAL: {"hours": def_h, "minutes": def_m, "seconds": def_s}},
-        )
+        suggested: dict[str, Any] = {
+            CONF_SCAN_INTERVAL: {"hours": def_h, "minutes": def_m, "seconds": def_s}
+        }
+        if existing_entity := self._options.get(CONF_SCAN_INTERVAL_ENTITY):
+            suggested[CONF_SCAN_INTERVAL_ENTITY] = existing_entity
+        data_schema = self.add_suggested_values_to_schema(data_schema, suggested)
         return self.async_show_form(step_id="update_period", data_schema=data_schema)
 
     @abstractmethod
