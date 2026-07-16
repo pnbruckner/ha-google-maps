@@ -188,6 +188,21 @@ See the description above about "Refined Filtering of Data Updates" for more inf
 
 This option controls the time between requests for updates.
 
+## Sensor Entities
+
+In addition to the `device_tracker` entity created for each person, a handful of `sensor` entities are also created for each, grouped on the same device. These simply expose data that was previously only available as `device_tracker` attributes, so it can be used directly (e.g., in dashboard cards, history graphs, or automations) without needing a template helper.
+
+| Sensor | Enabled by default | Category |
+| --- | --- | --- |
+| Address | Yes | — |
+| Last seen | Yes | Diagnostic |
+| Battery level | Yes | Diagnostic |
+| GPS accuracy | No | Diagnostic |
+
+GPS accuracy is disabled by default since it's mainly useful for troubleshooting; enable it from Settings -> Devices & services -> Entities if you want it.
+
+The Address, Last seen & GPS accuracy sensors apply the same "Refined Filtering of Data Updates" (see above) as the `device_tracker` entity itself, so they stay in agreement with the position it shows. One difference: this filtering "memory" does not survive a Home Assistant restart (the `device_tracker` entity's does), so right after a restart these three sensors will briefly show `Unknown` until the next update is received, rather than the last known value.
+
 ## Missing Data for Account Tracker
 
 The ["account holder" tracker entity](#account-tracker-entity), if created,
@@ -198,6 +213,8 @@ and the following attributes will be missing or invalid:
 `battery_charging`, `battery_level`, `entity_picture` & `nickname`
 
 All other attributes, including those related to location, will be present and valid.
+
+For the same reason, the account holder's [Battery level sensor](#sensor-entities) will always be `Unknown`.
 
 ## Account Strategies
 
