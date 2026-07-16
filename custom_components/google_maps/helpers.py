@@ -105,6 +105,40 @@ class LocationData(ExtraStoredData):
         )
 
 
+def resolve_loc_update(
+    prev: LocationData | None, new: LocationData, max_gps_accuracy: int
+) -> tuple[LocationData, str | None]:
+    """Decide if new location data should replace prev.
+
+    This is the integration's "refined filtering" rule (see README), shared by every
+    entity that tracks a person's location so they all stay in agreement.
+
+    Returns the location data to use (new, or prev if new should be ignored) and, if
+    new was ignored for a reason worth logging, that reason (else None).
+    """
+    if prev_seen := prev and prev.last_seen:
+        if new.last_seen < prev_seen:
+            return prev, (
+                "timestamp went backwards: "
+                f"{dt_util.as_local(new.last_seen)} < {dt_util.as_local(prev_seen)}"
+            )
+        if new.last_seen == prev_seen:
+            return prev, None
+    if prev_gps_accuracy := prev and prev.gps_accuracy:
+        if prev_gps_accuracy <= max_gps_accuracy:
+            if new.gps_accuracy > max_gps_accuracy:
+                return prev, (
+                    f"GPS accuracy ({new.gps_accuracy}) is greater than limit "
+                    f"({max_gps_accuracy})"
+                )
+        elif new.gps_accuracy > prev_gps_accuracy:
+            return prev, (
+                f"GPS accuracy ({new.gps_accuracy}) is greater than limit "
+                f"({max_gps_accuracy}) and worse than previous ({prev_gps_accuracy})"
+            )
+    return new, None
+
+
 @dataclass(frozen=True)
 class MiscData:
     """Miscellaneous data."""

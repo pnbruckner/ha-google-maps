@@ -117,6 +117,20 @@
                     }
                 }
             }
+        },
+        "sensor": {
+            "address": {
+                "name": "Address"
+            },
+            "battery_level": {
+                "name": "Battery level"
+            },
+            "gps_accuracy": {
+                "name": "GPS accuracy"
+            },
+            "last_seen": {
+                "name": "Last seen"
+            }
         }
     },
     "issues": {

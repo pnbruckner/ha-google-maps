@@ -33,7 +33,14 @@ from .const import (
     MISSING_DATA_GRACE_PERIOD,
 )
 from .coordinator import GMConfigEntry, GMDataUpdateCoordinator
-from .helpers import CFG_UNIQUE_IDS, ConfigID, LocationData, UniqueID, dev_ids
+from .helpers import (
+    CFG_UNIQUE_IDS,
+    ConfigID,
+    LocationData,
+    UniqueID,
+    dev_ids,
+    resolve_loc_update,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -373,41 +380,13 @@ class GoogleMapsDeviceTracker(
 
     def _update_loc(self, loc: LocationData) -> None:
         """Update location data if possible."""
-        last_seen = loc.last_seen
-        # Don't use "new" loc data if it really isn't new.
-        if prev_seen := self._loc and self._loc.last_seen:
-            if last_seen < prev_seen:
-                self._log_ignore_reason(
-                    "timestamp went backwards: "
-                    f"{dt_util.as_local(last_seen)} < {dt_util.as_local(prev_seen)}"
-                )
-                return
-            if last_seen == prev_seen:
-                return
-
-        last_gps_accuracy = loc.gps_accuracy
-        if prev_gps_accuracy := self._loc and self._loc.gps_accuracy:
-            # We have previous loc data.
-            if prev_gps_accuracy <= self._max_gps_accuracy:
-                # Previous loc data is "accurate."
-                # Don't use new loc data if it is inaccurate.
-                if last_gps_accuracy > self._max_gps_accuracy:
-                    self._log_ignore_reason(
-                        f"GPS accuracy ({last_gps_accuracy}) is greater than limit "
-                        f"({self._max_gps_accuracy})"
-                    )
-                    return
-            # Previous loc data is inaccurate.
-            # Don't use new data if it is less accurate.
-            elif last_gps_accuracy > prev_gps_accuracy:
-                self._log_ignore_reason(
-                    f"GPS accuracy ({last_gps_accuracy}) is greater than limit "
-                    f"({self._max_gps_accuracy}) and worse than previous "
-                    f"({prev_gps_accuracy})"
-                )
-                return
-
-        self._loc = loc
+        new_loc, ignore_reason = resolve_loc_update(
+            self._loc, loc, self._max_gps_accuracy
+        )
+        if ignore_reason:
+            self._log_ignore_reason(ignore_reason)
+            return
+        self._loc = new_loc
 
     def _log_ignore_reason(self, reason: str) -> None:
         """Log reason for ignoring location data."""
