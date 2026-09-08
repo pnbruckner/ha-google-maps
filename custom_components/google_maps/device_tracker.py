@@ -285,11 +285,6 @@ class GoogleMapsDeviceTracker(
         return False
 
     @property
-    def battery_level(self) -> int | None:
-        """Return the battery level of the device."""
-        return self._misc.battery_level
-
-    @property
     def location_accuracy(self) -> int:
         """Return the location accuracy of the device."""
         if self._loc is None:
