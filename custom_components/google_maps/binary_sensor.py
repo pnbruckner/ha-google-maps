@@ -1,5 +1,6 @@
 """Google Maps binary sensor."""
-from __future__ import annotations
+
+from typing import override
 
 from propcache.api import cached_property
 
@@ -46,11 +47,13 @@ class GoogleMapsBinarySensor(
         self._attr_is_on = super().available
 
     @cached_property
+    @override
     def available(self) -> bool:
         """Return if entity is available."""
         return True
 
     @callback
+    @override
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self._attr_is_on = super().available

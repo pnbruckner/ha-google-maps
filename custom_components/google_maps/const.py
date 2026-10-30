@@ -1,4 +1,5 @@
 """Constants for Google Maps Integration."""
+
 from datetime import timedelta
 
 DOMAIN = "google_maps"

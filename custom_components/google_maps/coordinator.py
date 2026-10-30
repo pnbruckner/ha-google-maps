@@ -1,5 +1,4 @@
 """DataUpdateCoordinator for the Google Maps integration."""
-from __future__ import annotations
 
 from asyncio import Lock
 from collections.abc import Callable
@@ -7,7 +6,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import logging
-from typing import Any, cast
+from typing import Any, cast, override
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_SCAN_INTERVAL, EVENT_HOMEASSISTANT_FINAL_WRITE
@@ -73,6 +72,7 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
             always_update=False,
         )
 
+    @override
     async def async_shutdown(self) -> None:
         """Cancel listeners, save cookies & close API."""
         await super().async_shutdown()
@@ -97,6 +97,7 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
             self._unsub_exp()
             self._unsub_exp = None
 
+    @override
     async def _async_setup(self) -> None:
         """Set up the coordinator."""
         self._api = await self.hass.async_add_executor_job(
@@ -112,6 +113,7 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
                 raise ConfigEntryAuthFailed(f"{err.__class__.__name__}: {err}") from err
             self._cookies_file_synced()
 
+    @override
     async def _async_update_data(self) -> GMData:
         """Fetch the latest data from the source.
 

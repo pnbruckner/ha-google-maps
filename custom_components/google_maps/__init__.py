@@ -1,5 +1,4 @@
 """The google_maps component."""
-from __future__ import annotations
 
 from collections import defaultdict
 from functools import partial

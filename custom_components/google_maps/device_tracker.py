@@ -1,5 +1,4 @@
 """Support for Google Maps location sharing."""
-from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping
@@ -8,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
 import logging
-from typing import Any, cast
+from typing import Any, cast, override
 
 from homeassistant.components.device_tracker import (
     ATTR_TRACKING_TYPE,
@@ -275,6 +274,7 @@ class GoogleMapsDeviceTracker(
         self._track_entity = track_entity
 
     @property
+    @override
     def extra_state_attributes(self) -> Mapping[str, Any]:
         """Return entity specific state attributes."""
         attrs: dict[str, Any] = {ATTR_NICKNAME: self._misc.nickname}
@@ -288,21 +288,25 @@ class GoogleMapsDeviceTracker(
         return dict(sorted(attrs.items()))
 
     @property
+    @override
     def entity_picture(self) -> str | None:
         """Return the entity picture to use in the frontend, if any."""
         return self._misc.entity_picture
 
     @property
+    @override
     def available(self) -> bool:
         """Return if entity is available."""
         return True
 
     @property
+    @override
     def force_update(self) -> bool:
         """Return True if state updates should be forced."""
         return False
 
     @property
+    @override
     def location_accuracy(self) -> int:
         """Return the location accuracy of the device."""
         if self._loc is None:
@@ -310,6 +314,7 @@ class GoogleMapsDeviceTracker(
         return self._loc.gps_accuracy
 
     @property
+    @override
     def latitude(self) -> float | None:
         """Return the latitude value of the device."""
         if self._loc is None:
@@ -317,6 +322,7 @@ class GoogleMapsDeviceTracker(
         return self._loc.latitude
 
     @property
+    @override
     def longitude(self) -> float | None:
         """Rerturn the longitude value of the device."""
         if self._loc is None:
@@ -324,6 +330,7 @@ class GoogleMapsDeviceTracker(
         return self._loc.longitude
 
     @property
+    @override
     def extra_restore_state_data(self) -> LocationData | None:
         """Return Google Maps specific state data to be restored."""
         return self._loc
@@ -341,6 +348,7 @@ class GoogleMapsDeviceTracker(
             or self._misc.full_name
         )
 
+    @override
     async def async_added_to_hass(self) -> None:
         """Run when entity about to be added to hass."""
         await super().async_added_to_hass()
@@ -372,6 +380,7 @@ class GoogleMapsDeviceTracker(
         self._update_loc(copy(data.loc))
 
     @callback
+    @override
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         if not (data := self.coordinator.data.get(cast(UniqueID, self.unique_id))):

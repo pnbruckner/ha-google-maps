@@ -1,11 +1,10 @@
 """Google Maps helper functions, etc."""
-from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import asdict as dc_asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, NewType, Self, cast
+from typing import Any, NewType, Self, cast, override
 
 from homeassistant.components.device_tracker import DOMAIN as DT_DOMAIN
 from homeassistant.core import HomeAssistant
@@ -64,6 +63,7 @@ class LocationData(ExtraStoredData):
     latitude: float
     longitude: float
 
+    @override
     def as_dict(self) -> dict[str, Any]:
         """Return a dict representation of the data."""
         return dc_asdict(self)
