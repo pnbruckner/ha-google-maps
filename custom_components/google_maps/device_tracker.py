@@ -10,8 +10,16 @@ from functools import partial
 import logging
 from typing import Any, cast
 
-from homeassistant.components.device_tracker import DOMAIN as DT_DOMAIN, TrackerEntity
-from homeassistant.const import ATTR_BATTERY_CHARGING
+from homeassistant.components.device_tracker import (
+    ATTR_TRACKING_TYPE,
+    DOMAIN as DT_DOMAIN,
+    TrackerEntity,
+)
+from homeassistant.const import (
+    ATTR_BATTERY_CHARGING,
+    ATTR_BATTERY_LEVEL,
+    ATTR_ENTITY_PICTURE,
+)
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -29,7 +37,6 @@ from .const import (
     ATTR_NICKNAME,
     ATTRIBUTION,
     CONF_MAX_GPS_ACCURACY,
-    DT_NO_RECORD_ATTRS,
     MISSING_DATA_GRACE_PERIOD,
 )
 from .coordinator import GMConfigEntry, GMDataUpdateCoordinator
@@ -220,7 +227,16 @@ class GoogleMapsDeviceTracker(
 ):
     """Google Maps Device Tracker."""
 
-    _unrecorded_attributes = DT_NO_RECORD_ATTRS
+    _unrecorded_attributes = frozenset(
+        {
+            ATTR_ADDRESS,
+            ATTR_BATTERY_CHARGING,
+            ATTR_BATTERY_LEVEL,
+            ATTR_ENTITY_PICTURE,
+            ATTR_NICKNAME,
+            ATTR_TRACKING_TYPE,
+        }
+    )
     _attr_attribution = ATTRIBUTION
     # With name == None and has_entity_name == True, entity will get device's name.
     _attr_name = None
@@ -264,6 +280,8 @@ class GoogleMapsDeviceTracker(
         attrs: dict[str, Any] = {ATTR_NICKNAME: self._misc.nickname}
         if (charging := self._misc.battery_charging) is not None:
             attrs[ATTR_BATTERY_CHARGING] = charging
+        if (level := self._misc.battery_level) is not None:
+            attrs[ATTR_BATTERY_LEVEL] = level
         if self._loc:
             attrs[ATTR_ADDRESS] = self._loc.address
             attrs[ATTR_LAST_SEEN] = dt_util.as_local(self._loc.last_seen)
@@ -283,11 +301,6 @@ class GoogleMapsDeviceTracker(
     def force_update(self) -> bool:
         """Return True if state updates should be forced."""
         return False
-
-    @property
-    def battery_level(self) -> int | None:
-        """Return the battery level of the device."""
-        return self._misc.battery_level
 
     @property
     def location_accuracy(self) -> int:

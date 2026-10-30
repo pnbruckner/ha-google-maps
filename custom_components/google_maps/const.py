@@ -1,8 +1,6 @@
 """Constants for Google Maps Integration."""
 from datetime import timedelta
 
-from homeassistant.const import ATTR_ENTITY_PICTURE
-
 DOMAIN = "google_maps"
 ATTRIBUTION = "Data from Google Maps"
 
@@ -20,5 +18,3 @@ ATTR_NICKNAME = "nickname"
 CONF_COOKIES_FILE = "cookies_file"
 CONF_CREATE_ACCT_ENTITY = "create_acct_entity"
 CONF_MAX_GPS_ACCURACY = "max_gps_accuracy"
-
-DT_NO_RECORD_ATTRS = frozenset({ATTR_ADDRESS, ATTR_ENTITY_PICTURE, ATTR_NICKNAME})
