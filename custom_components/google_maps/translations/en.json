@@ -108,6 +108,9 @@
                     "nickname": {"name": "Nickname"}
                 }
             }
+        },
+        "sensor": {
+            "bat_lvl": {"name": "battery level"}
         }
     },
     "issues": {

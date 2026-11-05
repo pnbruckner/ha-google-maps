@@ -14,6 +14,7 @@ from homeassistant.components.device_tracker import (
     DOMAIN as DT_DOMAIN,
     TrackerEntity,
 )
+from homeassistant.components.sensor import DOMAIN as S_DOMAIN
 from homeassistant.const import (
     ATTR_BATTERY_CHARGING,
     ATTR_BATTERY_LEVEL,
@@ -40,6 +41,7 @@ from .const import (
 )
 from .coordinator import GMConfigEntry, GMDataUpdateCoordinator
 from .helpers import CFG_UNIQUE_IDS, ConfigID, LocationData, UniqueID, dev_ids
+from .sensor import GoogleMapsBatLvlSensor
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -61,16 +63,19 @@ async def async_setup_entry(
 
     cid = ConfigID(entry.entry_id)
     coordinator = entry.runtime_data.coordinator
+    new_sensor_queue = entry.runtime_data.new_sensor_queue
     max_gps_accuracy = entry.options[CONF_MAX_GPS_ACCURACY]
     unique_ids = hass.data[CFG_UNIQUE_IDS]
 
     lock = asyncio.Lock()
-    entities: dict[UniqueID, GoogleMapsDeviceTracker] = {}
+    entities: dict[
+        UniqueID, tuple[GoogleMapsDeviceTracker, GoogleMapsBatLvlSensor]
+    ] = {}
     missing: dict[UniqueID, MissingParams] = {}
     registered_entities: dict[str, UniqueID] = {
         ent.entity_id: UniqueID(ent.unique_id)
         for ent in er.async_entries_for_config_entry(ent_reg, cid)
-        if ent.domain == DT_DOMAIN
+        if ent.domain in (DT_DOMAIN, S_DOMAIN)
     }
     unsub_ent_reg_updates: CALLBACK_TYPE | None = None
 
@@ -112,14 +117,15 @@ async def async_setup_entry(
             uid = registered_entities.pop(entity_id)
             track_ent_reg_updates()
 
-            device = dev_reg.async_get_device(dev_ids(uid))
-            if not device:
-                # TODO: Remove warning???
-                _LOGGER.warning(
-                    "Could not find device for removed entity: %s", entity_id
-                )
-                return
-            dev_reg.async_remove_device(device.id)
+            if uid not in registered_entities.values():
+                device = dev_reg.async_get_device(dev_ids(uid))
+                if not device:
+                    # TODO: Remove warning???
+                    _LOGGER.warning(
+                        "Could not find device for removed entity: %s", entity_id
+                    )
+                    return
+                dev_reg.async_remove_device(device.id)
 
         # update
         elif old_entity_id := cast(str | None, event.data.get("old_entity_id")):
@@ -141,7 +147,7 @@ async def async_setup_entry(
         #       the data is missing.
         assert uid not in missing
         missing[uid] = MissingParams(
-            entities[uid].log_name,
+            entities[uid][0].log_name,
             async_call_later(
                 hass, MISSING_DATA_GRACE_PERIOD, partial(remove_entity, uid)
             ),
@@ -170,8 +176,7 @@ async def async_setup_entry(
             _LOGGER.warning("Data missing for %s", mp.name)
             assert mp.unsub
             mp.unsub = None
-            entity = entities.pop(uid)
-            await entity.async_remove()
+            await asyncio.gather(*(ent.async_remove() for ent in entities.pop(uid)))
         # Do not release uid from unique_ids in case data comes back and entity can
         # be created again. It will still be in the Entity Registry, at least if and
         # until the user removes it from the registry. And even then, no need to
@@ -199,14 +204,22 @@ async def async_setup_entry(
             # by other config entries, and create entities for those that have been
             # "taken" and have not had entities created yet.
             if create_uids := unique_ids.take(cid, uids) - entities.keys():
-                new_entities = {
-                    uid: GoogleMapsDeviceTracker(
-                        coordinator, uid, max_gps_accuracy, partial(track_entity, uid)
+                trackers: list[GoogleMapsDeviceTracker] = []
+                for uid in create_uids:
+                    track_entity_with_uid = partial(track_entity, uid)
+                    trackers.append(
+                        tracker := GoogleMapsDeviceTracker(
+                            coordinator, uid, track_entity_with_uid, max_gps_accuracy
+                        )
                     )
-                    for uid in create_uids
-                }
-                async_add_entities(new_entities.values())
-                entities.update(new_entities)
+                    # Pass the new sensor entity to sensor.py to add to hass.
+                    await new_sensor_queue.put(
+                        sensor := GoogleMapsBatLvlSensor(
+                            coordinator, uid, track_entity_with_uid
+                        )
+                    )
+                    entities[uid] = (tracker, sensor)
+                async_add_entities(trackers)
 
     @callback
     def update_entities_cb() -> None:
@@ -249,8 +262,8 @@ class GoogleMapsDeviceTracker(
         self,
         coordinator: GMDataUpdateCoordinator,
         uid: UniqueID,
-        max_gps_accuracy: int,
         track_entity: Callable[[str], None],
+        max_gps_accuracy: int,
     ) -> None:
         """Initialize Google Maps Device Tracker."""
         super().__init__(coordinator)
@@ -260,7 +273,6 @@ class GoogleMapsDeviceTracker(
 
         # Use misc data now. Loc data will be handled in async_added_to_hass.
         data = coordinator.data[uid]
-        assert data.misc
         self._misc = copy(data.misc)
         full_name = data.misc.full_name
         name = f"Google Maps {full_name}"
@@ -376,7 +388,6 @@ class GoogleMapsDeviceTracker(
         # have updated since then and now there is no data for this uid.
         if not (data := self.coordinator.data.get(cast(UniqueID, self.unique_id))):
             return
-        assert data.loc
         self._update_loc(copy(data.loc))
 
     @callback
@@ -387,8 +398,6 @@ class GoogleMapsDeviceTracker(
             # Data not availble. Keep current data for now.
             # If data is not available long enough, Entity will be removed.
             return
-        assert data.misc
-        assert data.loc
         self._misc = copy(data.misc)
         self._update_loc(copy(data.loc))
         super()._handle_coordinator_update()

@@ -1,6 +1,6 @@
 """DataUpdateCoordinator for the Google Maps integration."""
 
-from asyncio import Lock
+from asyncio import Lock, Queue
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
@@ -13,6 +13,7 @@ from homeassistant.const import CONF_SCAN_INTERVAL, EVENT_HOMEASSISTANT_FINAL_WR
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -35,15 +36,15 @@ from .helpers import PersonData, UniqueID, cookies_file_path, expiring_soon
 _LOGGER = logging.getLogger(__name__)
 
 
-GMData = dict[UniqueID, PersonData]
-"""Google Maps data.
+GMPersonData = dict[UniqueID, PersonData]
+"""Google Maps person data.
 
 Dictionary of unique ID -> PersonData.
 For "account entity", unique ID is the account's email address.
 """
 
 
-class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
+class GMDataUpdateCoordinator(DataUpdateCoordinator[GMPersonData]):
     """Google Maps data update coordinator."""
 
     config_entry: ConfigEntry
@@ -114,7 +115,7 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
             self._cookies_file_synced()
 
     @override
-    async def _async_update_data(self) -> GMData:
+    async def _async_update_data(self) -> GMPersonData:
         """Fetch the latest data from the source.
 
         If creating "account entity", its unique ID will be the account's email address.
@@ -202,6 +203,7 @@ class GMConfigEntryParams:
     coordinator: GMDataUpdateCoordinator
     setup_data: dict[str, Any]
     setup_options: dict[str, Any]
+    new_sensor_queue: Queue[Entity]
 
     def __init__(
         self, coordinator: GMDataUpdateCoordinator, entry: ConfigEntry
@@ -210,6 +212,7 @@ class GMConfigEntryParams:
         self.coordinator = coordinator
         self.setup_data = deepcopy(dict(entry.data))
         self.setup_options = deepcopy(dict(entry.options))
+        self.new_sensor_queue = Queue()
 
 
 GMConfigEntry = ConfigEntry[GMConfigEntryParams]
