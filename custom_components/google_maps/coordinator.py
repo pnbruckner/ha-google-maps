@@ -8,12 +8,12 @@ from datetime import datetime, timedelta
 import logging
 from typing import Any, cast, override
 
+from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_SCAN_INTERVAL, EVENT_HOMEASSISTANT_FINAL_WRITE
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import issue_registry as ir
-from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -203,7 +203,7 @@ class GMConfigEntryParams:
     coordinator: GMDataUpdateCoordinator
     setup_data: dict[str, Any]
     setup_options: dict[str, Any]
-    new_sensor_queue: Queue[Entity]
+    new_sensors_queue: Queue[list[SensorEntity]]
 
     def __init__(
         self, coordinator: GMDataUpdateCoordinator, entry: ConfigEntry
@@ -212,7 +212,7 @@ class GMConfigEntryParams:
         self.coordinator = coordinator
         self.setup_data = deepcopy(dict(entry.data))
         self.setup_options = deepcopy(dict(entry.options))
-        self.new_sensor_queue = Queue()
+        self.new_sensors_queue = Queue()
 
 
 GMConfigEntry = ConfigEntry[GMConfigEntryParams]

@@ -110,7 +110,10 @@
             }
         },
         "sensor": {
-            "bat_lvl": {"name": "battery level"}
+            "address": {"name": "address"},
+            "bat_lvl": {"name": "battery level"},
+            "gps_accuracy": {"name": "GPS accuracy"},
+            "last_seen": {"name": "last seen"}
         }
     },
     "issues": {

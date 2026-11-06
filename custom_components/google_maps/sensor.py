@@ -1,14 +1,16 @@
 """Google Maps sensor."""
 
+from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import cast, override
+from datetime import datetime, timedelta
+from typing import Any, override
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfRatio
+from homeassistant.const import UnitOfLength, UnitOfRatio
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -16,7 +18,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import ATTRIBUTION
 from .coordinator import GMConfigEntry, GMDataUpdateCoordinator
-from .helpers import UniqueID, dev_ids
+from .helpers import PersonData, UniqueID
 
 
 async def async_setup_entry(
@@ -26,45 +28,37 @@ async def async_setup_entry(
 
     async def add_new_sensors() -> None:
         """Add new sensors."""
-        new_sensor_queue = entry.runtime_data.new_sensor_queue
+        new_sensors_queue = entry.runtime_data.new_sensors_queue
         while True:
-            sensor = await new_sensor_queue.get()
-            async_add_entities([sensor])
+            async_add_entities(await new_sensors_queue.get())
 
     entry.async_create_background_task(
         hass, add_new_sensors(), f"Add new sensor entities for {entry.title}"
     )
 
 
-class GoogleMapsBatLvlSensor(CoordinatorEntity[GMDataUpdateCoordinator], SensorEntity):
-    """Google Maps Battery Level Sensor."""
+class GoogleMapsSensor(CoordinatorEntity[GMDataUpdateCoordinator], SensorEntity, ABC):
+    """Google Maps Sensor."""
 
     _attr_attribution = ATTRIBUTION
-    _attr_device_class = SensorDeviceClass.BATTERY
     _attr_has_entity_name = True
-    _attr_translation_key = "bat_lvl"
-    _attr_native_unit_of_measurement = UnitOfRatio.PERCENTAGE
-    _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(
         self,
         coordinator: GMDataUpdateCoordinator,
         uid: UniqueID,
+        device_info: dr.DeviceInfo,
         track_entity: Callable[[str], None],
     ) -> None:
-        """Initialize Google Maps Device Tracker."""
+        """Initialize Google Maps Sensor."""
         super().__init__(coordinator)
 
-        misc = coordinator.data[uid].misc
-        name = f"Google Maps {misc.full_name}"
-
         # NOTE: Unique ID of "account entity" is the account's email address.
-        self._attr_unique_id = uid
-        self._attr_device_info = dr.DeviceInfo(
-            identifiers=dev_ids(uid), name=name, serial_number=uid
-        )
-        self._attr_native_value = misc.battery_level
+        self._attr_unique_id = f"{uid}-{self._attr_translation_key}"
+        self._attr_device_info = device_info
+        self._attr_native_value = self._native_value(coordinator.data[uid])
 
+        self._uid_base = uid
         self._track_entity = track_entity
 
     @override
@@ -80,8 +74,91 @@ class GoogleMapsBatLvlSensor(CoordinatorEntity[GMDataUpdateCoordinator], SensorE
     @override
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        if data := self.coordinator.data.get(cast(UniqueID, self.unique_id)):
-            self._attr_native_value = data.misc.battery_level
+        if data := self.coordinator.data.get(self._uid_base):
+            self._attr_native_value = self._native_value(data)
         else:
             self._attr_native_value = None
         super()._handle_coordinator_update()
+
+    @abstractmethod
+    def _native_value(self, data: PersonData) -> Any | None:
+        """Return native value."""
+
+
+class GoogleMapsBatLvlSensor(GoogleMapsSensor):
+    """Google Maps Battery Level Sensor."""
+
+    _attr_translation_key = "bat_lvl"
+    _attr_device_class = SensorDeviceClass.BATTERY
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfRatio.PERCENTAGE
+
+    @override
+    def _native_value(self, data: PersonData) -> Any | None:
+        """Return native value."""
+        return data.misc.battery_level
+
+
+class GoogleMapsAddressSensor(GoogleMapsSensor):
+    """Google Maps Address Sensor."""
+
+    _attr_translation_key = "address"
+    _attr_entity_registry_enabled_default = False
+
+    @override
+    def _native_value(self, data: PersonData) -> Any | None:
+        """Return native value."""
+        return data.loc.address
+
+
+class GoogleMapsGPSAccuracySensor(GoogleMapsSensor):
+    """Google Maps GPS Accuracy Sensor."""
+
+    _attr_translation_key = "gps_accuracy"
+    _attr_entity_registry_enabled_default = False
+    _attr_device_class = SensorDeviceClass.DISTANCE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfLength.METERS
+    _attr_icon = "mdi:map-marker-radius-outline"
+
+    @override
+    def _native_value(self, data: PersonData) -> Any | None:
+        """Return native value."""
+        return data.loc.gps_accuracy
+
+
+def _nearest_second(time: datetime) -> datetime:
+    """Round time to nearest second."""
+    return time.replace(microsecond=0) + timedelta(
+        seconds=0 if time.microsecond < 500000 else 1
+    )
+
+
+class GoogleMapsLastSeenSensor(GoogleMapsSensor):
+    """Google Maps Last Seen Sensor."""
+
+    _attr_translation_key = "last_seen"
+    _attr_entity_registry_enabled_default = False
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    @override
+    def _native_value(self, data: PersonData) -> Any | None:
+        """Return native value."""
+        # SensorEntity will display second resolution, but without rounding. So do the
+        # rounding here.
+        return _nearest_second(data.loc.last_seen)
+
+
+def uid_sensors(
+    coordinator: GMDataUpdateCoordinator,
+    uid: UniqueID,
+    device_info: dr.DeviceInfo,
+    track_entity: Callable[[str], None],
+) -> list[SensorEntity]:
+    """Create sensors for UniqueID."""
+    return [
+        GoogleMapsBatLvlSensor(coordinator, uid, device_info, track_entity),
+        GoogleMapsAddressSensor(coordinator, uid, device_info, track_entity),
+        GoogleMapsGPSAccuracySensor(coordinator, uid, device_info, track_entity),
+        GoogleMapsLastSeenSensor(coordinator, uid, device_info, track_entity),
+    ]

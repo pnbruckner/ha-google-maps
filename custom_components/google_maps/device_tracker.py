@@ -14,7 +14,7 @@ from homeassistant.components.device_tracker import (
     DOMAIN as DT_DOMAIN,
     TrackerEntity,
 )
-from homeassistant.components.sensor import DOMAIN as S_DOMAIN
+from homeassistant.components.sensor import DOMAIN as S_DOMAIN, SensorEntity
 from homeassistant.const import (
     ATTR_BATTERY_CHARGING,
     ATTR_BATTERY_LEVEL,
@@ -41,9 +41,17 @@ from .const import (
 )
 from .coordinator import GMConfigEntry, GMDataUpdateCoordinator
 from .helpers import CFG_UNIQUE_IDS, ConfigID, LocationData, UniqueID, dev_ids
-from .sensor import GoogleMapsBatLvlSensor
+from .sensor import uid_sensors
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass
+class GMEntities:
+    """Google Maps entities."""
+
+    tracker: GoogleMapsDeviceTracker
+    sensors: list[SensorEntity]
 
 
 @dataclass
@@ -63,14 +71,12 @@ async def async_setup_entry(
 
     cid = ConfigID(entry.entry_id)
     coordinator = entry.runtime_data.coordinator
-    new_sensor_queue = entry.runtime_data.new_sensor_queue
+    new_sensors_queue = entry.runtime_data.new_sensors_queue
     max_gps_accuracy = entry.options[CONF_MAX_GPS_ACCURACY]
     unique_ids = hass.data[CFG_UNIQUE_IDS]
 
     lock = asyncio.Lock()
-    entities: dict[
-        UniqueID, tuple[GoogleMapsDeviceTracker, GoogleMapsBatLvlSensor]
-    ] = {}
+    entities: dict[UniqueID, GMEntities] = {}
     missing: dict[UniqueID, MissingParams] = {}
     registered_entities: dict[str, UniqueID] = {
         ent.entity_id: UniqueID(ent.unique_id)
@@ -134,7 +140,7 @@ async def async_setup_entry(
     def track_entity(uid: UniqueID, entity_id: str) -> None:
         """Track entity registry updates for entity."""
         if entity_id in registered_entities:
-            assert registered_entities[entity_id] == uid
+            assert registered_entities[entity_id].startswith(uid)
             return
         registered_entities[entity_id] = uid
         track_ent_reg_updates()
@@ -147,7 +153,7 @@ async def async_setup_entry(
         #       the data is missing.
         assert uid not in missing
         missing[uid] = MissingParams(
-            entities[uid][0].log_name,
+            entities[uid].tracker.log_name,
             async_call_later(
                 hass, MISSING_DATA_GRACE_PERIOD, partial(remove_entity, uid)
             ),
@@ -176,7 +182,11 @@ async def async_setup_entry(
             _LOGGER.warning("Data missing for %s", mp.name)
             assert mp.unsub
             mp.unsub = None
-            await asyncio.gather(*(ent.async_remove() for ent in entities.pop(uid)))
+            gm_entities = entities.pop(uid)
+            await asyncio.gather(
+                gm_entities.tracker.async_remove(),
+                *(sensor.async_remove() for sensor in gm_entities.sensors),
+            )
         # Do not release uid from unique_ids in case data comes back and entity can
         # be created again. It will still be in the Entity Registry, at least if and
         # until the user removes it from the registry. And even then, no need to
@@ -204,22 +214,31 @@ async def async_setup_entry(
             # by other config entries, and create entities for those that have been
             # "taken" and have not had entities created yet.
             if create_uids := unique_ids.take(cid, uids) - entities.keys():
-                trackers: list[GoogleMapsDeviceTracker] = []
+                created_trackers: list[GoogleMapsDeviceTracker] = []
+                created_sensors: list[SensorEntity] = []
                 for uid in create_uids:
+                    device_info = dr.DeviceInfo(
+                        identifiers=dev_ids(uid),
+                        name=f"Google Maps {coordinator.data[uid].misc.full_name}",
+                        serial_number=uid,
+                    )
                     track_entity_with_uid = partial(track_entity, uid)
-                    trackers.append(
-                        tracker := GoogleMapsDeviceTracker(
-                            coordinator, uid, track_entity_with_uid, max_gps_accuracy
-                        )
+                    tracker = GoogleMapsDeviceTracker(
+                        coordinator,
+                        uid,
+                        device_info,
+                        track_entity_with_uid,
+                        max_gps_accuracy,
                     )
-                    # Pass the new sensor entity to sensor.py to add to hass.
-                    await new_sensor_queue.put(
-                        sensor := GoogleMapsBatLvlSensor(
-                            coordinator, uid, track_entity_with_uid
-                        )
+                    sensors = uid_sensors(
+                        coordinator, uid, device_info, track_entity_with_uid
                     )
-                    entities[uid] = (tracker, sensor)
-                async_add_entities(trackers)
+                    created_trackers.append(tracker)
+                    created_sensors.extend(sensors)
+                    entities[uid] = GMEntities(tracker, sensors)
+                async_add_entities(created_trackers)
+                # Pass the new sensor entities to sensor.py to add to hass.
+                await new_sensors_queue.put(created_sensors)
 
     @callback
     def update_entities_cb() -> None:
@@ -262,28 +281,26 @@ class GoogleMapsDeviceTracker(
         self,
         coordinator: GMDataUpdateCoordinator,
         uid: UniqueID,
+        device_info: dr.DeviceInfo,
         track_entity: Callable[[str], None],
         max_gps_accuracy: int,
     ) -> None:
         """Initialize Google Maps Device Tracker."""
         super().__init__(coordinator)
+
         # NOTE: Unique ID of "account entity" is the account's email address.
         self._attr_unique_id = uid
-        self._max_gps_accuracy = max_gps_accuracy
-
-        # Use misc data now. Loc data will be handled in async_added_to_hass.
-        data = coordinator.data[uid]
-        self._misc = copy(data.misc)
-        full_name = data.misc.full_name
-        name = f"Google Maps {full_name}"
         # For some reason, the device_tracker component doesn't allow entity to be
         # associated with a device. This appears to be for some legacy reason that no
         # longer exists or makes sense. E.g., some built-in integrations assign device
         # info for device_tracker entities.
-        self._attr_device_info = dr.DeviceInfo(  # type: ignore[assignment]
-            identifiers=dev_ids(uid), name=name, serial_number=uid
-        )
+        self._attr_device_info = device_info  # type: ignore[assignment]
+
         self._track_entity = track_entity
+        self._max_gps_accuracy = max_gps_accuracy
+
+        # Use misc data now. Loc data will be handled in async_added_to_hass.
+        self._misc = copy(coordinator.data[uid].misc)
 
     @property
     @override
