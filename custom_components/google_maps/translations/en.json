@@ -113,7 +113,8 @@
             "address": {"name": "address"},
             "bat_lvl": {"name": "battery level"},
             "gps_accuracy": {"name": "GPS accuracy"},
-            "last_seen": {"name": "last seen"}
+            "last_seen": {"name": "last seen"},
+            "stale": {"name": "location age"}
         }
     },
     "issues": {

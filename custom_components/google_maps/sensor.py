@@ -5,20 +5,25 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any, override
 
+from propcache.api import cached_property
+
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfLength, UnitOfRatio
+from homeassistant.const import UnitOfLength, UnitOfRatio, UnitOfTime
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import ATTRIBUTION
 from .coordinator import GMConfigEntry, GMDataUpdateCoordinator
 from .helpers import PersonData, UniqueID
+
+SCAN_INTERVAL = timedelta(seconds=15)
 
 
 async def async_setup_entry(
@@ -149,6 +154,40 @@ class GoogleMapsLastSeenSensor(GoogleMapsSensor):
         return _nearest_second(data.loc.last_seen)
 
 
+class GoogleMapsStaleSensor(GoogleMapsSensor):
+    """Google Maps Stale Sensor."""
+
+    _attr_translation_key = "stale"
+    _attr_entity_registry_enabled_default = False
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+
+    @cached_property
+    @override
+    def should_poll(self) -> bool:
+        """Need to poll to update time since last update."""
+        return True
+
+    @override
+    async def async_update(self) -> None:
+        """Update the entity."""
+        if not self.enabled:
+            return
+        self._attr_native_value = self._min_since_last_seen
+
+    @override
+    def _native_value(self, data: PersonData) -> Any | None:
+        """Return native value."""
+        self._last_seen = data.loc.last_seen
+        return self._min_since_last_seen
+
+    @property
+    def _min_since_last_seen(self) -> float:
+        """Return minutes since last seen."""
+        return (dt_util.utcnow() - self._last_seen).total_seconds() / 60
+
+
 def uid_sensors(
     coordinator: GMDataUpdateCoordinator,
     uid: UniqueID,
@@ -161,4 +200,5 @@ def uid_sensors(
         GoogleMapsAddressSensor(coordinator, uid, device_info, track_entity),
         GoogleMapsGPSAccuracySensor(coordinator, uid, device_info, track_entity),
         GoogleMapsLastSeenSensor(coordinator, uid, device_info, track_entity),
+        GoogleMapsStaleSensor(coordinator, uid, device_info, track_entity),
     ]
