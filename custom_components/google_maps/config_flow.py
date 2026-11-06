@@ -1,5 +1,4 @@
 """Config flow for Google Maps."""
-from __future__ import annotations
 
 from abc import abstractmethod
 from asyncio import Lock
@@ -9,7 +8,7 @@ from datetime import datetime
 import logging
 from os import PathLike
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, override
 
 from propcache.api import cached_property
 import voluptuous as vol
@@ -170,6 +169,7 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
+    @override
     def async_get_options_flow(config_entry: ConfigEntry) -> GoogleMapsOptionsFlow:
         """Get the options flow for this handler."""
         return GoogleMapsOptionsFlow()
@@ -200,6 +200,7 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
         self._api = GMLocSharing(username)
         self._data = deepcopy(dict(data))
 
+    @override
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -447,6 +448,7 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
             },
         )
 
+    @override
     async def async_step_done(
         self, _: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -541,6 +543,7 @@ class GoogleMapsOptionsFlow(OptionsFlow, GoogleMapsFlow):
         self._init_gmflow(username, self.config_entry.options)
         return await self.async_step_account_entity()
 
+    @override
     async def async_step_done(
         self, _: dict[str, Any] | None = None
     ) -> ConfigFlowResult:

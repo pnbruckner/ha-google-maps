@@ -1,14 +1,14 @@
 """DataUpdateCoordinator for the Google Maps integration."""
-from __future__ import annotations
 
-from asyncio import Lock
+from asyncio import Lock, Queue
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import logging
-from typing import Any, cast
+from typing import Any, cast, override
 
+from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_SCAN_INTERVAL, EVENT_HOMEASSISTANT_FINAL_WRITE
 from homeassistant.core import Event, HomeAssistant, callback
@@ -36,15 +36,15 @@ from .helpers import PersonData, UniqueID, cookies_file_path, expiring_soon
 _LOGGER = logging.getLogger(__name__)
 
 
-GMData = dict[UniqueID, PersonData]
-"""Google Maps data.
+GMPersonData = dict[UniqueID, PersonData]
+"""Google Maps person data.
 
 Dictionary of unique ID -> PersonData.
 For "account entity", unique ID is the account's email address.
 """
 
 
-class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
+class GMDataUpdateCoordinator(DataUpdateCoordinator[GMPersonData]):
     """Google Maps data update coordinator."""
 
     config_entry: ConfigEntry
@@ -73,6 +73,7 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
             always_update=False,
         )
 
+    @override
     async def async_shutdown(self) -> None:
         """Cancel listeners, save cookies & close API."""
         await super().async_shutdown()
@@ -97,6 +98,7 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
             self._unsub_exp()
             self._unsub_exp = None
 
+    @override
     async def _async_setup(self) -> None:
         """Set up the coordinator."""
         self._api = await self.hass.async_add_executor_job(
@@ -112,7 +114,8 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMData]):
                 raise ConfigEntryAuthFailed(f"{err.__class__.__name__}: {err}") from err
             self._cookies_file_synced()
 
-    async def _async_update_data(self) -> GMData:
+    @override
+    async def _async_update_data(self) -> GMPersonData:
         """Fetch the latest data from the source.
 
         If creating "account entity", its unique ID will be the account's email address.
@@ -200,6 +203,7 @@ class GMConfigEntryParams:
     coordinator: GMDataUpdateCoordinator
     setup_data: dict[str, Any]
     setup_options: dict[str, Any]
+    new_sensors_queue: Queue[list[SensorEntity]]
 
     def __init__(
         self, coordinator: GMDataUpdateCoordinator, entry: ConfigEntry
@@ -208,6 +212,7 @@ class GMConfigEntryParams:
         self.coordinator = coordinator
         self.setup_data = deepcopy(dict(entry.data))
         self.setup_options = deepcopy(dict(entry.options))
+        self.new_sensors_queue = Queue()
 
 
 GMConfigEntry = ConfigEntry[GMConfigEntryParams]
