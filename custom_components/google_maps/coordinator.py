@@ -31,16 +31,16 @@ from .gm_loc_sharing import (
     InvalidData,
     RequestFailed,
 )
-from .helpers import PersonData, UniqueID, cookies_file_path, expiring_soon
+from .helpers import PersonData, PersonID, cookies_file_path, expiring_soon
 
 _LOGGER = logging.getLogger(__name__)
 
 
-GMPersonData = dict[UniqueID, PersonData]
+GMPersonData = dict[PersonID, PersonData]
 """Google Maps person data.
 
-Dictionary of unique ID -> PersonData.
-For "account entity", unique ID is the account's email address.
+Dictionary of person ID -> PersonData.
+For "account entity", person ID is the account's email address.
 """
 
 
@@ -57,7 +57,8 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMPersonData]):
         self._cookies_file = str(cookies_file_path(hass, entry.data[CONF_COOKIES_FILE]))
         self._create_acct_entity = entry.options[CONF_CREATE_ACCT_ENTITY]
 
-        # The account's username is used as the config entry's unique ID.
+        # The account's email address (aka username) is used as the config entry's
+        # unique ID.
         self._account_email = cast(str, entry.unique_id)
         self.cookie_lock = Lock()
         self._unsub_final_write = hass.bus.async_listen_once(
@@ -118,7 +119,7 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMPersonData]):
     async def _async_update_data(self) -> GMPersonData:
         """Fetch the latest data from the source.
 
-        If creating "account entity", its unique ID will be the account's email address.
+        If creating "account entity", its person ID will be the account's email address.
         """
         async with self.cookie_lock:
             try:
@@ -133,7 +134,7 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMPersonData]):
             self.hass, self._save_cookies_if_changed(), "Save cookies if changed"
         )
         return {
-            UniqueID(person.id): PersonData.from_person(person) for person in people
+            PersonID(person.id): PersonData.from_person(person) for person in people
         }
 
     async def _save_cookies_if_changed(

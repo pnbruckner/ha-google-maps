@@ -6,6 +6,7 @@ import logging
 from typing import cast
 
 from homeassistant.components.device_tracker import DOMAIN as DT_DOMAIN
+from homeassistant.components.sensor import DOMAIN as S_DOMAIN
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
@@ -18,13 +19,13 @@ from homeassistant.helpers import (
 from homeassistant.helpers.typing import ConfigType
 
 from .config_flow import GoogleMapsConfigFlow
-from .const import CONF_COOKIES_FILE, CONF_CREATE_ACCT_ENTITY, DOMAIN
+from .const import CONF_COOKIES_FILE, CONF_CREATE_ACCT_ENTITY, DOMAIN, UID_SUFFIXES
 from .coordinator import GMConfigEntry, GMConfigEntryParams, GMDataUpdateCoordinator
 from .helpers import (
-    CFG_UNIQUE_IDS,
+    CFG_PERSON_IDS,
     ConfigID,
-    ConfigUniqueIDs,
-    UniqueID,
+    ConfigPersonIDs,
+    PersonID,
     cookies_file_path,
     dev_ids,
 )
@@ -68,7 +69,7 @@ async def async_setup(hass: HomeAssistant, _: ConfigType) -> bool:
         )
         return False
 
-    hass.data[CFG_UNIQUE_IDS] = ConfigUniqueIDs(hass)
+    hass.data[CFG_PERSON_IDS] = ConfigPersonIDs(hass)
     return True
 
 
@@ -147,8 +148,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: GMConfigEntry) -> bool:
 
     if entry.disabled_by:
         # Entry was just disabled.
-        # Release all the unique IDs that were "owned" by this config entry.
-        hass.data[CFG_UNIQUE_IDS].release_all(ConfigID(entry.entry_id))
+        # Release all the person IDs that were "owned" by this config entry.
+        hass.data[CFG_PERSON_IDS].release_all(ConfigID(entry.entry_id))
     else:
         # It's possible entry is being reloaded due to a reauthentication,
         # reconfiguration or an options update. So check if any entry data or options
@@ -160,15 +161,23 @@ async def async_unload_entry(hass: HomeAssistant, entry: GMConfigEntry) -> bool:
             # User turned off the "account entity" option. Clean up the entity & device
             # registry entries that were created for it.
 
-            # The "account" entity's unique ID is the config entry's username, aka the
-            # account's email address, which is also the config entry's unique ID.
-            uid = UniqueID(cast(str, entry.unique_id))
+            # The config entry's unique ID is set to the account's username, aka the
+            # account's email address. For the "account entity", this is also the
+            # person ID.
+            pid = PersonID(cast(str, entry.unique_id))
 
             ent_reg = er.async_get(hass)
-            if entity_id := ent_reg.async_get_entity_id(DT_DOMAIN, DOMAIN, uid):
+            # Tracker entity uses person ID as its unique ID.
+            if entity_id := ent_reg.async_get_entity_id(DT_DOMAIN, DOMAIN, pid):
                 ent_reg.async_remove(entity_id)
+            # Sensor entities use person ID as the prefix of their unique IDs.
+            for suffix in UID_SUFFIXES:
+                if entity_id := ent_reg.async_get_entity_id(
+                    S_DOMAIN, DOMAIN, f"{pid}-{suffix}"
+                ):
+                    ent_reg.async_remove(entity_id)
             dev_reg = dr.async_get(hass)
-            if device := dev_reg.async_get_device(dev_ids(uid)):
+            if device := dev_reg.async_get_device(dev_ids(pid)):
                 dev_reg.async_remove_device(device.id)
 
         if entry.data[CONF_COOKIES_FILE] != (

@@ -19,3 +19,11 @@ ATTR_NICKNAME = "nickname"
 CONF_COOKIES_FILE = "cookies_file"
 CONF_CREATE_ACCT_ENTITY = "create_acct_entity"
 CONF_MAX_GPS_ACCURACY = "max_gps_accuracy"
+
+UID_SUFFIXES = (
+    ADDRESS_SUFFIX := "address",
+    BAT_LVL_SUFFIX := "bat_lvl",
+    GPS_ACC_SUFFIX := "gps_accuracy",
+    LAST_SEEN_SUFFIX := "last_seen",
+    STALE_SUFFIX := "stale",
+)

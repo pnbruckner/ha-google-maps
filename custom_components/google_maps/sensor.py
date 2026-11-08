@@ -19,9 +19,16 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
-from .const import ATTRIBUTION
+from .const import (
+    ADDRESS_SUFFIX,
+    ATTRIBUTION,
+    BAT_LVL_SUFFIX,
+    GPS_ACC_SUFFIX,
+    LAST_SEEN_SUFFIX,
+    STALE_SUFFIX,
+)
 from .coordinator import GMConfigEntry, GMDataUpdateCoordinator
-from .helpers import PersonData, UniqueID
+from .helpers import PersonData, PersonID
 
 SCAN_INTERVAL = timedelta(seconds=15)
 
@@ -51,7 +58,7 @@ class GoogleMapsSensor(CoordinatorEntity[GMDataUpdateCoordinator], SensorEntity,
     def __init__(
         self,
         coordinator: GMDataUpdateCoordinator,
-        uid: UniqueID,
+        pid: PersonID,
         device_info: dr.DeviceInfo,
         track_entity: Callable[[str], None],
     ) -> None:
@@ -59,11 +66,11 @@ class GoogleMapsSensor(CoordinatorEntity[GMDataUpdateCoordinator], SensorEntity,
         super().__init__(coordinator)
 
         # NOTE: Unique ID of "account entity" is the account's email address.
-        self._attr_unique_id = f"{uid}-{self._attr_translation_key}"
+        self._attr_unique_id = f"{pid}-{self._attr_translation_key}"
         self._attr_device_info = device_info
-        self._attr_native_value = self._native_value(coordinator.data[uid])
+        self._attr_native_value = self._native_value(coordinator.data[pid])
 
-        self._uid_base = uid
+        self._pid = pid
         self._track_entity = track_entity
 
     @override
@@ -79,7 +86,7 @@ class GoogleMapsSensor(CoordinatorEntity[GMDataUpdateCoordinator], SensorEntity,
     @override
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        if data := self.coordinator.data.get(self._uid_base):
+        if data := self.coordinator.data.get(self._pid):
             self._attr_native_value = self._native_value(data)
         else:
             self._attr_native_value = None
@@ -93,7 +100,7 @@ class GoogleMapsSensor(CoordinatorEntity[GMDataUpdateCoordinator], SensorEntity,
 class GoogleMapsBatLvlSensor(GoogleMapsSensor):
     """Google Maps Battery Level Sensor."""
 
-    _attr_translation_key = "bat_lvl"
+    _attr_translation_key = BAT_LVL_SUFFIX
     _attr_device_class = SensorDeviceClass.BATTERY
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfRatio.PERCENTAGE
@@ -107,7 +114,7 @@ class GoogleMapsBatLvlSensor(GoogleMapsSensor):
 class GoogleMapsAddressSensor(GoogleMapsSensor):
     """Google Maps Address Sensor."""
 
-    _attr_translation_key = "address"
+    _attr_translation_key = ADDRESS_SUFFIX
     _attr_entity_registry_enabled_default = False
 
     @override
@@ -119,7 +126,7 @@ class GoogleMapsAddressSensor(GoogleMapsSensor):
 class GoogleMapsGPSAccuracySensor(GoogleMapsSensor):
     """Google Maps GPS Accuracy Sensor."""
 
-    _attr_translation_key = "gps_accuracy"
+    _attr_translation_key = GPS_ACC_SUFFIX
     _attr_entity_registry_enabled_default = False
     _attr_device_class = SensorDeviceClass.DISTANCE
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -142,7 +149,7 @@ def _nearest_second(time: datetime) -> datetime:
 class GoogleMapsLastSeenSensor(GoogleMapsSensor):
     """Google Maps Last Seen Sensor."""
 
-    _attr_translation_key = "last_seen"
+    _attr_translation_key = LAST_SEEN_SUFFIX
     _attr_entity_registry_enabled_default = False
     _attr_device_class = SensorDeviceClass.TIMESTAMP
 
@@ -157,7 +164,7 @@ class GoogleMapsLastSeenSensor(GoogleMapsSensor):
 class GoogleMapsStaleSensor(GoogleMapsSensor):
     """Google Maps Stale Sensor."""
 
-    _attr_translation_key = "stale"
+    _attr_translation_key = STALE_SUFFIX
     _attr_entity_registry_enabled_default = False
     _attr_device_class = SensorDeviceClass.DURATION
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -188,17 +195,17 @@ class GoogleMapsStaleSensor(GoogleMapsSensor):
         return (dt_util.utcnow() - self._last_seen).total_seconds() / 60
 
 
-def uid_sensors(
+def pid_sensors(
     coordinator: GMDataUpdateCoordinator,
-    uid: UniqueID,
+    pid: PersonID,
     device_info: dr.DeviceInfo,
     track_entity: Callable[[str], None],
 ) -> list[SensorEntity]:
-    """Create sensors for UniqueID."""
+    """Create sensors for person ID."""
     return [
-        GoogleMapsBatLvlSensor(coordinator, uid, device_info, track_entity),
-        GoogleMapsAddressSensor(coordinator, uid, device_info, track_entity),
-        GoogleMapsGPSAccuracySensor(coordinator, uid, device_info, track_entity),
-        GoogleMapsLastSeenSensor(coordinator, uid, device_info, track_entity),
-        GoogleMapsStaleSensor(coordinator, uid, device_info, track_entity),
+        GoogleMapsBatLvlSensor(coordinator, pid, device_info, track_entity),
+        GoogleMapsAddressSensor(coordinator, pid, device_info, track_entity),
+        GoogleMapsGPSAccuracySensor(coordinator, pid, device_info, track_entity),
+        GoogleMapsLastSeenSensor(coordinator, pid, device_info, track_entity),
+        GoogleMapsStaleSensor(coordinator, pid, device_info, track_entity),
     ]
