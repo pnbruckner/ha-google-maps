@@ -316,6 +316,24 @@ There is one version of the extension that works in Chrome and Edge, and another
 
 </details>
 
+## Additional Entities
+
+For every account (i.e., config entry), a binary sensor will be created that indicates if the account is "online"
+(i.e., data can be obtained from the server.) This entity will be enabled by default.
+
+For every shared account that a device tracker entity is created, there will also be the following sensors created:
+
+Sensor | Enabled by default | Description
+-|-|-
+address | No | The address at which Google has estimated the device to be
+battery level | Yes | The battery level of the device
+GPS accuracy | No | Location accuracy of last GPS "fix"
+last seen | No | Timestamp of the last GPS "fix"
+location age | No | Time since last seen
+
+Note that some of these sensors may differ from the corresponding attribute of the `device_tracker` entity
+since these sensors show the "raw" data obtained from the server (i.e., not filtered by `last_seen` or `gps_accuracy`.)
+
 ## Troubleshooting
 ### Overview
 
