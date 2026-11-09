@@ -59,9 +59,6 @@ async def async_setup(hass: HomeAssistant, _: ConfigType) -> bool:
             hass,
             DOMAIN,
             "duplicate_usernames",
-            # TODO: Make it fixable and add repair flow that for each reused username,
-            #       show list of configs using it and ask which to enable and whether or
-            #       not to remove the others???
             is_fixable=False,
             severity=ir.IssueSeverity.ERROR,
             translation_key="duplicate_usernames",
@@ -121,15 +118,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = GMDataUpdateCoordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = GMConfigEntryParams(coordinator, entry)
-
-    # TODO: After dropping support for HA versions before 2025.8, entry_updated can be
-    #       removed if GoogleMapsOptionsFlow is based on OptionsFlowWithReload instead
-    #       of OptionsFlow.
-    async def entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
-        """Handle config entry update."""
-        await hass.config_entries.async_reload(entry.entry_id)
-
-    entry.async_on_unload(entry.add_update_listener(entry_updated))
 
     await hass.config_entries.async_forward_entry_setups(entry, _PLATFORMS)
     return True

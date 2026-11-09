@@ -21,7 +21,7 @@ from homeassistant.config_entries import (
     ConfigEntryBaseFlow,
     ConfigFlow,
     ConfigFlowResult,
-    OptionsFlow,
+    OptionsFlowWithReload,
 )
 from homeassistant.const import CONF_SCAN_INTERVAL, CONF_USERNAME
 from homeassistant.core import callback
@@ -461,20 +461,19 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
         update_entry = self._update_entry
         if update_entry:
             assert self.unique_id == self._username
-            # TODO: Use async_update_reload_and_abort(..., reload_even_if_entry_is_unchanged=False)???
-            self.hass.config_entries.async_update_entry(
-                update_entry,
-                data=self._data,
-                options=self._options,
-                title=self._username,
-                unique_id=self.unique_id,
-            )
             if self.source == SOURCE_REAUTH:
                 action = "Re-authentication"
             else:
                 action = "Re-configuration"
             _LOGGER.debug("%s was successful", action)
-            return self.async_abort(reason=f"{self.source}_successful")
+            return self.async_update_reload_and_abort(
+                update_entry,
+                unique_id=self.unique_id,
+                title=self._username,
+                data=self._data,
+                options=self._options,
+                reload_even_if_entry_is_unchanged=False,
+            )
 
         return self.async_create_entry(
             title=self._username, data=self._data, options=self._options
@@ -531,7 +530,7 @@ class GoogleMapsConfigFlow(ConfigFlow, GoogleMapsFlow, domain=DOMAIN):
         self._api.save_cookies(str(cf_path))
 
 
-class GoogleMapsOptionsFlow(OptionsFlow, GoogleMapsFlow):
+class GoogleMapsOptionsFlow(OptionsFlowWithReload, GoogleMapsFlow):
     """Google Maps options flow."""
 
     async def async_step_init(
