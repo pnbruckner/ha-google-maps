@@ -1,15 +1,14 @@
 """Google Maps Location Sharing."""
-from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from functools import cached_property  # pylint: disable=hass-deprecated-import
 from http.cookiejar import MozillaCookieJar
 import json
 import logging
 from typing import Any, Self, cast
 
+from propcache.api import cached_property
 from requests import RequestException, Session
 from requests.adapters import HTTPAdapter
 from urllib3 import Retry

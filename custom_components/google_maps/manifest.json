@@ -1,6 +1,7 @@
 {
   "domain": "google_maps",
   "name": "Google Maps",
+  "categories": ["presence_location"],
   "codeowners": ["@pnbruckner"],
   "config_flow": true,
   "dependencies": ["file_upload"],

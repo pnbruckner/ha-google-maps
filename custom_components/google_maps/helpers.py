@@ -1,11 +1,10 @@
 """Google Maps helper functions, etc."""
-from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import asdict as dc_asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, NewType, Self, cast
+from typing import Any, NewType, Self, cast, override
 
 from homeassistant.components.device_tracker import DOMAIN as DT_DOMAIN
 from homeassistant.core import HomeAssistant
@@ -18,9 +17,9 @@ from homeassistant.util.hass_dict import HassKey
 from .const import COOKIE_WARNING_PERIOD, CREDENTIALS_FILE, DOMAIN
 from .gm_loc_sharing import GMPerson
 
-CFG_UNIQUE_IDS: HassKey[ConfigUniqueIDs] = HassKey(DOMAIN)
+CFG_PERSON_IDS: HassKey[ConfigPersonIDs] = HassKey(DOMAIN)
 ConfigID = NewType("ConfigID", str)
-UniqueID = NewType("UniqueID", str)
+PersonID = NewType("PersonID", str)
 
 
 def old_cookies_file_path(hass: HomeAssistant, username: str) -> Path:
@@ -45,8 +44,12 @@ def expiring_soon(expiration: datetime | None) -> bool:
     )
 
 
-def dev_ids(uid: UniqueID) -> set[tuple[str, str]]:
-    """Return device identifiers for unique ID."""
+def dev_ids(uid: ConfigID | PersonID) -> set[tuple[str, str]]:
+    """Return device identifiers.
+
+    For the service associated with the account's binary sensor, use the ConfigID.
+    For a device associated with a person, use the PersonID.
+    """
     return {(DOMAIN, uid)}
 
 
@@ -64,6 +67,7 @@ class LocationData(ExtraStoredData):
     latitude: float
     longitude: float
 
+    @override
     def as_dict(self) -> dict[str, Any]:
         """Return a dict representation of the data."""
         return dc_asdict(self)
@@ -143,8 +147,8 @@ class PersonData:
         )
 
 
-class ConfigUniqueIDs:
-    """Unique ID config assignments.
+class ConfigPersonIDs:
+    """Person ID config assignments.
 
     Since multiple Google accounts might be added, and it's possible for people to have
     shared their location with more than one of those accounts, to avoid having the same
@@ -162,46 +166,47 @@ class ConfigUniqueIDs:
 
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize assignments from Entity Registry."""
-        self._all_uids: set[UniqueID] = set()
-        self._cfg_uids: defaultdict[ConfigID, set[UniqueID]] = defaultdict(set)
+        self._all_pids: set[PersonID] = set()
+        self._cfg_pids: defaultdict[ConfigID, set[PersonID]] = defaultdict(set)
 
         ent_reg = er.async_get(hass)
         for cfg in hass.config_entries.async_entries(DOMAIN, include_disabled=False):
             cid = ConfigID(cfg.entry_id)
-            cfg_uids = {
-                UniqueID(ent.unique_id)
+            cfg_pids = {
+                # Tracker entity uses person ID as its unique ID.
+                PersonID(ent.unique_id)
                 for ent in er.async_entries_for_config_entry(ent_reg, cid)
                 if ent.domain == DT_DOMAIN
             }
-            if not cfg_uids:
+            if not cfg_pids:
                 continue
-            self._all_uids.update(cfg_uids)
-            self._cfg_uids[cid] = cfg_uids
+            self._all_pids.update(cfg_pids)
+            self._cfg_pids[cid] = cfg_pids
 
-    def owned(self, cid: ConfigID) -> frozenset[UniqueID]:
-        """Return unique IDs owned by config."""
-        return frozenset(self._cfg_uids.get(cid, set()))
+    def owned(self, cid: ConfigID) -> frozenset[PersonID]:
+        """Return person IDs owned by config."""
+        return frozenset(self._cfg_pids.get(cid, set()))
 
-    def take(self, cid: ConfigID, uids: frozenset[UniqueID]) -> frozenset[UniqueID]:
-        """Take ownership of a set of unique IDs.
+    def take(self, cid: ConfigID, pids: frozenset[PersonID]) -> frozenset[PersonID]:
+        """Take ownership of a set of person IDs.
 
-        Returns set of unique IDs actually taken;
+        Returns set of person IDs actually taken;
         i.e., that did not already belong to other configs.
         """
-        uids -= self._all_uids - self.owned(cid)
-        self._all_uids.update(uids)
-        self._cfg_uids[cid].update(uids)
-        return uids
+        pids -= self._all_pids - self.owned(cid)
+        self._all_pids.update(pids)
+        self._cfg_pids[cid].update(pids)
+        return pids
 
-    def release(self, cid: ConfigID, uid: UniqueID) -> None:
-        """Release ownership of a single unique ID if owned by config."""
-        if uid not in self.owned(cid):
+    def release(self, cid: ConfigID, pid: PersonID) -> None:
+        """Release ownership of a single person ID if owned by config."""
+        if pid not in self.owned(cid):
             return
-        self._all_uids.remove(uid)
-        self._cfg_uids[cid].remove(uid)
-        if not self._cfg_uids[cid]:
-            del self._cfg_uids[cid]
+        self._all_pids.remove(pid)
+        self._cfg_pids[cid].remove(pid)
+        if not self._cfg_pids[cid]:
+            del self._cfg_pids[cid]
 
     def release_all(self, cid: ConfigID) -> None:
-        """Release all unique IDs owned by config."""
-        self._all_uids -= self._cfg_uids.pop(cid, set())
+        """Release all person IDs owned by config."""
+        self._all_pids -= self._cfg_pids.pop(cid, set())

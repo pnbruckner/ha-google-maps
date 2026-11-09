@@ -1,7 +1,6 @@
 """Constants for Google Maps Integration."""
-from datetime import timedelta
 
-from homeassistant.const import ATTR_ENTITY_PICTURE
+from datetime import timedelta
 
 DOMAIN = "google_maps"
 ATTRIBUTION = "Data from Google Maps"
@@ -21,4 +20,10 @@ CONF_COOKIES_FILE = "cookies_file"
 CONF_CREATE_ACCT_ENTITY = "create_acct_entity"
 CONF_MAX_GPS_ACCURACY = "max_gps_accuracy"
 
-DT_NO_RECORD_ATTRS = frozenset({ATTR_ADDRESS, ATTR_ENTITY_PICTURE, ATTR_NICKNAME})
+UID_SUFFIXES = (
+    ADDRESS_SUFFIX := "address",
+    BAT_LVL_SUFFIX := "bat_lvl",
+    GPS_ACC_SUFFIX := "gps_accuracy",
+    LAST_SEEN_SUFFIX := "last_seen",
+    STALE_SUFFIX := "stale",
+)

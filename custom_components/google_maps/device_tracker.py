@@ -1,17 +1,24 @@
 """Support for Google Maps location sharing."""
-from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping
-from copy import copy
 from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
 import logging
-from typing import Any, cast
+from typing import Any, cast, override
 
-from homeassistant.components.device_tracker import DOMAIN as DT_DOMAIN, TrackerEntity
-from homeassistant.const import ATTR_BATTERY_CHARGING
+from homeassistant.components.device_tracker import (
+    ATTR_TRACKING_TYPE,
+    DOMAIN as DT_DOMAIN,
+    TrackerEntity,
+)
+from homeassistant.components.sensor import DOMAIN as S_DOMAIN, SensorEntity
+from homeassistant.const import (
+    ATTR_BATTERY_CHARGING,
+    ATTR_BATTERY_LEVEL,
+    ATTR_ENTITY_PICTURE,
+)
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -29,13 +36,21 @@ from .const import (
     ATTR_NICKNAME,
     ATTRIBUTION,
     CONF_MAX_GPS_ACCURACY,
-    DT_NO_RECORD_ATTRS,
     MISSING_DATA_GRACE_PERIOD,
 )
 from .coordinator import GMConfigEntry, GMDataUpdateCoordinator
-from .helpers import CFG_UNIQUE_IDS, ConfigID, LocationData, UniqueID, dev_ids
+from .helpers import CFG_PERSON_IDS, ConfigID, LocationData, PersonID, dev_ids
+from .sensor import pid_sensors
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass
+class GMEntities:
+    """Google Maps entities."""
+
+    tracker: GoogleMapsDeviceTracker
+    sensors: list[SensorEntity]
 
 
 @dataclass
@@ -46,7 +61,7 @@ class MissingParams:
     unsub: CALLBACK_TYPE | None
 
 
-async def async_setup_entry(
+async def async_setup_entry(  # noqa: C901
     hass: HomeAssistant, entry: GMConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up the device tracker platform."""
@@ -55,17 +70,25 @@ async def async_setup_entry(
 
     cid = ConfigID(entry.entry_id)
     coordinator = entry.runtime_data.coordinator
+    new_sensors_queue = entry.runtime_data.new_sensors_queue
     max_gps_accuracy = entry.options[CONF_MAX_GPS_ACCURACY]
-    unique_ids = hass.data[CFG_UNIQUE_IDS]
+    cfg_person_ids = hass.data[CFG_PERSON_IDS]
 
     lock = asyncio.Lock()
-    entities: dict[UniqueID, GoogleMapsDeviceTracker] = {}
-    missing: dict[UniqueID, MissingParams] = {}
-    registered_entities: dict[str, UniqueID] = {
-        ent.entity_id: UniqueID(ent.unique_id)
-        for ent in er.async_entries_for_config_entry(ent_reg, cid)
-        if ent.domain == DT_DOMAIN
-    }
+    entities: dict[PersonID, GMEntities] = {}
+    missing: dict[PersonID, MissingParams] = {}
+    registered_entities: dict[str, PersonID] = {}
+    for ent in er.async_entries_for_config_entry(ent_reg, cid):
+        if ent.domain not in (DT_DOMAIN, S_DOMAIN):
+            continue
+        if ent.domain == DT_DOMAIN:
+            # Trackers use the person ID as their unique ID.
+            pid = PersonID(ent.unique_id)
+        else:
+            # Sensors use the person ID as a prefix of their unique IDs, so remove the
+            # suffixes.
+            pid = PersonID(ent.unique_id.rsplit("-")[0])
+        registered_entities[ent.entity_id] = pid
     unsub_ent_reg_updates: CALLBACK_TYPE | None = None
 
     def stop_tracking_ent_reg_updates() -> None:
@@ -97,110 +120,128 @@ async def async_setup_entry(
     def entity_registry_updated(
         event: Event[er.EventEntityRegistryUpdatedData],
     ) -> None:
-        """Handle entity removed from entity registry."""
+        """Handle entity's registry entry being removed or updated."""
         if (action := event.data["action"]) not in ("remove", "update"):
             return
 
         entity_id = event.data["entity_id"]
         if action == "remove":
-            uid = registered_entities.pop(entity_id)
+            pid = registered_entities.pop(entity_id)
             track_ent_reg_updates()
 
-            device = dev_reg.async_get_device(dev_ids(uid))
-            if not device:
-                # TODO: Remove warning???
-                _LOGGER.warning(
-                    "Could not find device for removed entity: %s", entity_id
-                )
-                return
-            dev_reg.async_remove_device(device.id)
+            if pid not in registered_entities.values():
+                if not (device := dev_reg.async_get_device(dev_ids(pid))):
+                    _LOGGER.warning(
+                        "Could not find device for removed entity: %s", entity_id
+                    )
+                    return
+                dev_reg.async_remove_device(device.id)
 
         # update
         elif old_entity_id := cast(str | None, event.data.get("old_entity_id")):
             track_entity(registered_entities.pop(old_entity_id), entity_id)
 
-    def track_entity(uid: UniqueID, entity_id: str) -> None:
+    def track_entity(pid: PersonID, entity_id: str) -> None:
         """Track entity registry updates for entity."""
         if entity_id in registered_entities:
-            assert registered_entities[entity_id] == uid
+            assert registered_entities[entity_id] == pid
             return
-        registered_entities[entity_id] = uid
+        registered_entities[entity_id] = pid
         track_ent_reg_updates()
 
-    def schedule_entity_removal(uid: UniqueID) -> None:
-        """Schedule an entity to be removed."""
-        # NOTE: The entity is not removed immediately because there are times when a
+    def schedule_entity_removal(pid: PersonID) -> None:
+        """Schedule entities for person ID to be removed."""
+        # NOTE: The entities are not removed immediately because there are times when a
         #       person's data goes missing for a little while, but then comes back again
-        #       on its own. The state of the entity will just not update during the time
-        #       the data is missing.
-        assert uid not in missing
-        missing[uid] = MissingParams(
-            entities[uid].log_name,
+        #       on its own. The state of the entities will just not update during the
+        #       time the data is missing.
+        assert pid not in missing
+        missing[pid] = MissingParams(
+            entities[pid].tracker.log_name,
             async_call_later(
-                hass, MISSING_DATA_GRACE_PERIOD, partial(remove_entity, uid)
+                hass, MISSING_DATA_GRACE_PERIOD, partial(remove_entities, pid)
             ),
         )
 
-    def unschedule_entity_removal(uid: UniqueID) -> None:
-        """Unschedule removal of entity."""
-        mp = missing.pop(uid)
+    def unschedule_entity_removal(pid: PersonID) -> None:
+        """Unschedule removal of entities for person ID."""
+        mp = missing.pop(pid)
         if mp.unsub:
             mp.unsub()
         else:
             _LOGGER.warning("Data available again for %s", mp.name)
 
-    async def remove_entity(uid: UniqueID, _: datetime) -> None:
-        """Remove entity."""
+    async def remove_entities(pid: PersonID, _: datetime) -> None:
+        """Remove entities for person ID."""
         # NOTE: They will still be in the entity registry, so they will still exist in
         #       HA's state machine, but they will become unavailable. The user can then
         #       completely remove them if they want. Unless, of course, their data comes
-        #       back again, in which case, the entity will be recreated.
-        # Need to do this with a lock so that update_entities can't create a new Entity
-        # for the same UID that would add itself to the state machine, then the
-        # async_remove here would remove it from the state machine. Also, two entities
-        # with the same UID could cause an error or a different entity ID (e.g., xx_2).
+        #       back again, in which case, the entitird will be recreated.
+        # Need to do this with a lock so that update_entities can't create new entities
+        # with the same UIDs that would add themselves to the state machine, then the
+        # async_remove here would remove them from the state machine. Also, duplicate
+        # UIDs could cause an error or a different entity ID (e.g., xx_2).
         async with lock:
-            mp = missing[uid]
+            mp = missing[pid]
             _LOGGER.warning("Data missing for %s", mp.name)
             assert mp.unsub
             mp.unsub = None
-            entity = entities.pop(uid)
-            await entity.async_remove()
-        # Do not release uid from unique_ids in case data comes back and entity can
-        # be created again. It will still be in the Entity Registry, at least if and
-        # until the user removes it from the registry. And even then, no need to
-        # release the uid from unique_ids since it's not likely to come back and it
+            gm_entities = entities.pop(pid)
+            await asyncio.gather(
+                gm_entities.tracker.async_remove(),
+                *(sensor.async_remove() for sensor in gm_entities.sensors),
+            )
+        # Do not release pid from cfg_person_ids in case data comes back and entities
+        # can be created again. They will still be in the Entity Registry, at least if
+        # and until the user removes them from the registry. And even then, no need to
+        # release the pid from cfg_person_ids since it's not likely to come back and it
         # will be released if entry gets unloaded and it won't get added next time
         # entry loads.
 
     async def update_entities() -> None:
         """Update entities for people."""
         async with lock:
-            # NOTE: Unique ID of "account entity" is the account's email address.
-            uids = frozenset(coordinator.data)
+            pids = frozenset(coordinator.data)
 
-            # For any entity that was scheduled to be removed due to its data being
+            # For any entities that were scheduled to be removed due to there data being
             # missing, cancel the removal if the data is available again.
-            for uid in missing.keys() & uids:
-                unschedule_entity_removal(uid)
+            for pid in missing.keys() & pids:
+                unschedule_entity_removal(pid)
 
             # For any newly missing data, schedule a task to remove the entity after a
             # grace period.
-            for uid in entities.keys() - uids - missing.keys():
-                schedule_entity_removal(uid)
+            for pid in entities.keys() - pids - missing.keys():
+                schedule_entity_removal(pid)
 
-            # Attempt to take ownership of any unique IDs that have not yet been taken
+            # Attempt to take ownership of any person IDs that have not yet been taken
             # by other config entries, and create entities for those that have been
             # "taken" and have not had entities created yet.
-            if create_uids := unique_ids.take(cid, uids) - entities.keys():
-                new_entities = {
-                    uid: GoogleMapsDeviceTracker(
-                        coordinator, uid, max_gps_accuracy, partial(track_entity, uid)
+            if create_pids := cfg_person_ids.take(cid, pids) - entities.keys():
+                created_trackers: list[GoogleMapsDeviceTracker] = []
+                created_sensors: list[SensorEntity] = []
+                for pid in create_pids:
+                    device_info = dr.DeviceInfo(
+                        identifiers=dev_ids(pid),
+                        name=f"Google Maps {coordinator.data[pid].misc.full_name}",
+                        serial_number=pid,
                     )
-                    for uid in create_uids
-                }
-                async_add_entities(new_entities.values())
-                entities.update(new_entities)
+                    track_entity_with_uid = partial(track_entity, pid)
+                    tracker = GoogleMapsDeviceTracker(
+                        coordinator,
+                        pid,
+                        device_info,
+                        track_entity_with_uid,
+                        max_gps_accuracy,
+                    )
+                    sensors = pid_sensors(
+                        coordinator, pid, device_info, track_entity_with_uid
+                    )
+                    created_trackers.append(tracker)
+                    created_sensors.extend(sensors)
+                    entities[pid] = GMEntities(tracker, sensors)
+                async_add_entities(created_trackers)
+                # Pass the new sensor entities to sensor.py to add to hass.
+                await new_sensors_queue.put(created_sensors)
 
     @callback
     def update_entities_cb() -> None:
@@ -220,7 +261,16 @@ class GoogleMapsDeviceTracker(
 ):
     """Google Maps Device Tracker."""
 
-    _unrecorded_attributes = DT_NO_RECORD_ATTRS
+    _unrecorded_attributes = frozenset(
+        {
+            ATTR_ADDRESS,
+            ATTR_BATTERY_CHARGING,
+            ATTR_BATTERY_LEVEL,
+            ATTR_ENTITY_PICTURE,
+            ATTR_NICKNAME,
+            ATTR_TRACKING_TYPE,
+        }
+    )
     _attr_attribution = ATTRIBUTION
     # With name == None and has_entity_name == True, entity will get device's name.
     _attr_name = None
@@ -233,63 +283,62 @@ class GoogleMapsDeviceTracker(
     def __init__(
         self,
         coordinator: GMDataUpdateCoordinator,
-        uid: UniqueID,
-        max_gps_accuracy: int,
+        pid: PersonID,
+        device_info: dr.DeviceInfo,
         track_entity: Callable[[str], None],
+        max_gps_accuracy: int,
     ) -> None:
         """Initialize Google Maps Device Tracker."""
         super().__init__(coordinator)
-        # NOTE: Unique ID of "account entity" is the account's email address.
-        self._attr_unique_id = uid
-        self._max_gps_accuracy = max_gps_accuracy
 
-        # Use misc data now. Loc data will be handled in async_added_to_hass.
-        data = coordinator.data[uid]
-        assert data.misc
-        self._misc = copy(data.misc)
-        full_name = data.misc.full_name
-        name = f"Google Maps {full_name}"
+        self._attr_unique_id = pid
         # For some reason, the device_tracker component doesn't allow entity to be
         # associated with a device. This appears to be for some legacy reason that no
         # longer exists or makes sense. E.g., some built-in integrations assign device
         # info for device_tracker entities.
-        self._attr_device_info = dr.DeviceInfo(  # type: ignore[assignment]
-            identifiers=dev_ids(uid), name=name, serial_number=uid
-        )
+        self._attr_device_info = device_info  # type: ignore[assignment]
+
+        self._pid = pid
         self._track_entity = track_entity
+        self._max_gps_accuracy = max_gps_accuracy
+
+        # Use misc data now. Loc data will be handled in async_added_to_hass.
+        self._misc = coordinator.data[pid].misc
 
     @property
+    @override
     def extra_state_attributes(self) -> Mapping[str, Any]:
         """Return entity specific state attributes."""
         attrs: dict[str, Any] = {ATTR_NICKNAME: self._misc.nickname}
         if (charging := self._misc.battery_charging) is not None:
             attrs[ATTR_BATTERY_CHARGING] = charging
+        if (level := self._misc.battery_level) is not None:
+            attrs[ATTR_BATTERY_LEVEL] = level
         if self._loc:
             attrs[ATTR_ADDRESS] = self._loc.address
             attrs[ATTR_LAST_SEEN] = dt_util.as_local(self._loc.last_seen)
         return dict(sorted(attrs.items()))
 
     @property
+    @override
     def entity_picture(self) -> str | None:
         """Return the entity picture to use in the frontend, if any."""
         return self._misc.entity_picture
 
     @property
+    @override
     def available(self) -> bool:
         """Return if entity is available."""
         return True
 
     @property
+    @override
     def force_update(self) -> bool:
         """Return True if state updates should be forced."""
         return False
 
     @property
-    def battery_level(self) -> int | None:
-        """Return the battery level of the device."""
-        return self._misc.battery_level
-
-    @property
+    @override
     def location_accuracy(self) -> int:
         """Return the location accuracy of the device."""
         if self._loc is None:
@@ -297,6 +346,7 @@ class GoogleMapsDeviceTracker(
         return self._loc.gps_accuracy
 
     @property
+    @override
     def latitude(self) -> float | None:
         """Return the latitude value of the device."""
         if self._loc is None:
@@ -304,6 +354,7 @@ class GoogleMapsDeviceTracker(
         return self._loc.latitude
 
     @property
+    @override
     def longitude(self) -> float | None:
         """Rerturn the longitude value of the device."""
         if self._loc is None:
@@ -311,6 +362,7 @@ class GoogleMapsDeviceTracker(
         return self._loc.longitude
 
     @property
+    @override
     def extra_restore_state_data(self) -> LocationData | None:
         """Return Google Maps specific state data to be restored."""
         return self._loc
@@ -328,6 +380,7 @@ class GoogleMapsDeviceTracker(
             or self._misc.full_name
         )
 
+    @override
     async def async_added_to_hass(self) -> None:
         """Run when entity about to be added to hass."""
         await super().async_added_to_hass()
@@ -350,25 +403,23 @@ class GoogleMapsDeviceTracker(
                 self._loc = LocationData.from_dict(last_loc_data_dict)
 
         # Now that previous state has been restored, update with new data if possible.
-        # Note that although the Entity was created only when data for this uid was
+        # Note that although the Entity was created only when data for this pid was
         # available, it's possible (although not very likely) for the coordinator to
-        # have updated since then and now there is no data for this uid.
-        if not (data := self.coordinator.data.get(cast(UniqueID, self.unique_id))):
+        # have updated since then and now there is no data for this pid.
+        if not (data := self.coordinator.data.get(self._pid)):
             return
-        assert data.loc
-        self._update_loc(copy(data.loc))
+        self._update_loc(data.loc)
 
     @callback
+    @override
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        if not (data := self.coordinator.data.get(cast(UniqueID, self.unique_id))):
+        if not (data := self.coordinator.data.get(self._pid)):
             # Data not availble. Keep current data for now.
             # If data is not available long enough, Entity will be removed.
             return
-        assert data.misc
-        assert data.loc
-        self._misc = copy(data.misc)
-        self._update_loc(copy(data.loc))
+        self._misc = data.misc
+        self._update_loc(data.loc)
         super()._handle_coordinator_update()
 
     def _update_loc(self, loc: LocationData) -> None:
