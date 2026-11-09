@@ -179,6 +179,10 @@ class GoogleMapsStaleSensor(GoogleMapsSensor):
     @override
     async def async_update(self) -> None:
         """Update the entity."""
+        # NOTE: Calling homeassistant.update_entity on this entity will NOT cause the
+        #       update coordinator to refresh (like with the device_tracker and other
+        #       sensor entities.) It will only update the time since the last value of
+        #       last_seen obtained by the coordinator.
         if not self.enabled:
             return
         self._attr_native_value = self._min_since_last_seen

@@ -65,13 +65,19 @@ class GMDataUpdateCoordinator(DataUpdateCoordinator[GMPersonData]):
             EVENT_HOMEASSISTANT_FINAL_WRITE, self._save_cookies_if_changed
         )
 
+        if entry.pref_disable_polling:
+            update_interval: timedelta | None = None
+            always_update = True
+        else:
+            update_interval = timedelta(seconds=entry.options[CONF_SCAN_INTERVAL])
+            always_update = False
         super().__init__(
             hass,
             _LOGGER,
             config_entry=entry,
             name=entry.title,
-            update_interval=timedelta(seconds=entry.options[CONF_SCAN_INTERVAL]),
-            always_update=False,
+            update_interval=update_interval,
+            always_update=always_update,
         )
 
     @override
