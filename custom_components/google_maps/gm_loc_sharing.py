@@ -2,11 +2,13 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from http.cookiejar import MozillaCookieJar
 import json
 import logging
+import re
 from typing import Any, Self, cast
+from urllib.parse import parse_qs, urlparse
 
 from propcache.api import cached_property
 from requests import RequestException, Session
@@ -16,7 +18,23 @@ from urllib3.exceptions import MaxRetryError
 
 _LOGGER = logging.getLogger(__name__)
 _PROTOCOL = "https://"
-_URL = f"{_PROTOCOL}www.google.com/maps/rpc/locationsharing/read"
+_URL_GOOGLE = f"{_PROTOCOL}www.google.com"
+_URL_GOOGLE_MAPS = f"{_URL_GOOGLE}/maps"
+_URL_ACCOUNTS = f"{_PROTOCOL}accounts.google.com"
+_URL_ROTATE_COOKIES_PAGE = f"{_URL_ACCOUNTS}/RotateCookiesPage"
+_URL_ROTATE_COOKIES = f"{_URL_ACCOUNTS}/RotateCookies"
+_URL = f"{_URL_GOOGLE_MAPS}/rpc/locationsharing/read"
+_ROTATE_INTERVAL = timedelta(minutes=10)
+_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/91.0.4472.114 Safari/537.36"
+)
+_OG_PID_REGEX = r'\\"(https://accounts\.google\.com/ListAccounts\?[^"]+)\\"'
+_EXP_ID_REGEX = (
+    r'\\"https://accounts\.google\.com/RotateCookiesPage\\"],'
+    r"([0-9]+),[^,]+,[^,]+,[^,]+,([0-9]+),"
+)
+_INIT_VALUE_REGEX = r'init\(\'(-?\d+)\','
 _PARAMS: dict[str, Any] = {
     "authuser": 2,
     "hl": "en",
@@ -175,7 +193,9 @@ class GMLocSharing:
         )
         self._session.cookies = MozillaCookieJar()  # type: ignore[assignment]
         self._cookies_file_data: CookieData = {}
+        self._cookies_file: str | None = None
         self._data: Sequence[Any] = []
+        self._last_cookie_rotation: datetime | None = None
 
     @cached_property
     def _cookies(self) -> MozillaCookieJar:
@@ -218,16 +238,114 @@ class GMLocSharing:
         self._dump_cookies()
         if not {cookie.name for cookie in self._cookies} & _VALID_COOKIE_NAMES:
             raise InvalidCookies(f"Missing either of {_VALID_COOKIE_NAMES} cookies")
+        self._cookies_file = str(cookies_file)
         self._cookies_file_data = self._cookie_data
 
     def save_cookies(self, cookies_file: str) -> None:
         """Save cookies to file."""
         self._dump_changed_cookies()
+        if not {cookie.name for cookie in self._cookies} & _VALID_COOKIE_NAMES:
+            # Google deletes the session cookies when it rejects a session. Do not
+            # overwrite a usable cookies file with the degraded set.
+            _LOGGER.warning(
+                "%s: Not saving cookies because the session cookies are missing",
+                self._account_email,
+            )
+            self._cookies_file_data = self._cookie_data
+            return
         self._cookies.save(cookies_file, ignore_discard=True)
         self._cookies_file_data = self._cookie_data
 
+    def _rotate_cookies(self) -> None:
+        """Refresh the Google session using Google's RotateCookies flow.
+
+        Best effort: if Google changes the page format or rate limits the request,
+        keep using the existing cookies instead of failing the whole update.
+        """
+        now = datetime.now(UTC)
+        if (
+            self._last_cookie_rotation is not None
+            and now - self._last_cookie_rotation < _ROTATE_INTERVAL
+        ):
+            return
+        try:
+            resp = self._session.get(
+                _URL_GOOGLE_MAPS,
+                params={"authuser": _PARAMS["authuser"]},
+                timeout=_TIMEOUT,
+                verify=True,
+            )
+            resp.raise_for_status()
+            raw_data = resp.text
+            if not (match := re.search(_OG_PID_REGEX, raw_data)):
+                raise InvalidData("Could not find ListAccounts URL")
+            url = match.group(1).encode("utf-8").decode("unicode-escape")
+            url = url.encode("utf-8").decode("unicode-escape")
+            og_pid = parse_qs(urlparse(url).query)["pid"][0]
+            if not (match := re.search(_EXP_ID_REGEX, raw_data)):
+                raise InvalidData("Could not find cookie rotation parameters")
+            rot, exp_id = match.groups()
+            resp = self._session.get(
+                _URL_ROTATE_COOKIES_PAGE,
+                params={
+                    "og_pid": og_pid,
+                    "rot": rot,
+                    "origin": _URL_GOOGLE,
+                    "exp_id": exp_id,
+                },
+                headers={"Referer": _URL_GOOGLE, "User-Agent": _USER_AGENT},
+                timeout=_TIMEOUT,
+                verify=True,
+            )
+            resp.raise_for_status()
+            update_url = resp.url
+            if not (match := re.search(_INIT_VALUE_REGEX, resp.text)):
+                raise InvalidData("Could not find cookie rotation init value")
+            resp = self._session.post(
+                _URL_ROTATE_COOKIES,
+                json=[og_pid, match.group(1)],
+                headers={"Referer": update_url, "User-Agent": _USER_AGENT},
+                timeout=_TIMEOUT,
+                verify=True,
+            )
+            resp.raise_for_status()
+        except (
+            AttributeError,
+            IndexError,
+            KeyError,
+            RequestException,
+            MaxRetryError,
+            TypeError,
+            UnicodeDecodeError,
+            ValueError,
+            InvalidData,
+        ) as err:
+            # Do not retry on every poll (e.g., after a 429 rate limit).
+            self._last_cookie_rotation = now
+            _LOGGER.debug(
+                "%s: Cookie rotation failed: %s: %s",
+                self._account_email,
+                err.__class__.__name__,
+                err,
+            )
+            return
+
+        self._last_cookie_rotation = now
+        _LOGGER.debug("%s: Rotated Google session cookies", self._account_email)
+        if self._cookies_file:
+            try:
+                self.save_cookies(self._cookies_file)
+            except OSError as err:
+                _LOGGER.warning(
+                    "%s: Could not save rotated cookies: %s: %s",
+                    self._account_email,
+                    err.__class__.__name__,
+                    err,
+                )
+
     def get_new_data(self) -> None:
         """Get new data from Google server."""
+        self._rotate_cookies()
         try:
             resp = self._session.get(
                 _URL, params=_PARAMS, timeout=_TIMEOUT, verify=True
